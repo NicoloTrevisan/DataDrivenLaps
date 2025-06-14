@@ -732,6 +732,14 @@ def main():
             session = load_session_data(year, gp_name, session_name)
             driver_info = get_session_drivers_with_times(session)
             st.session_state.session_loaded = True
+            
+            # Debug information
+            st.info(f"🔍 Debug: Found {len(driver_info)} drivers in {session_name}")
+            if driver_info:
+                st.info(f"🔍 First few drivers: {[d['code'] for d in driver_info[:5]]}")
+            else:
+                st.warning("🔍 No drivers found in session!")
+                
     except Exception as e:
         st.error(f"Error loading session: {str(e)}")
         return
@@ -810,9 +818,9 @@ def main():
                             p1_driver = driver_info[0]['code']
                             p2_driver = driver_info[1]['code']
                             drivers_to_plot = [p1_driver, p2_driver]
-                            st.success(f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)")
+                            selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
                         else:
-                            st.warning("Not enough drivers with lap times available")
+                            selection_status = "⚠️ Not enough drivers with lap times available"
                     except:
                         selection_status = "⚠️ Could not determine P1 vs P2"
     else:
