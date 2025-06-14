@@ -738,6 +738,7 @@ def main():
     
     # Driver selection logic (common for both layouts)
     drivers_to_plot = []
+    selection_status = ""
     
     # Mobile/Desktop responsive driver selection
     if not st.session_state.get('mobile_view', False):
@@ -750,6 +751,12 @@ def main():
                     max_selections=2
                 )
                 drivers_to_plot = [d.split(' - ')[0] for d in selected_drivers]
+                if len(drivers_to_plot) == 2:
+                    selection_status = f"✅ Selected: {' vs '.join(drivers_to_plot)}"
+                elif len(drivers_to_plot) == 1:
+                    selection_status = f"⚠️ Please select one more driver (currently: {drivers_to_plot[0]})"
+                else:
+                    selection_status = "⚠️ Please select 2 drivers to compare"
                 
             elif driver_mode == "Teammates":
                 # Get all teams, but be more lenient with filtering
@@ -761,9 +768,9 @@ def main():
                     teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
                     if len(teammates) >= 2:
                         drivers_to_plot = teammates[:2]
-                        st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
+                        selection_status = f"🤝 Selected: {' vs '.join(drivers_to_plot)}"
                     else:
-                        st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
+                        selection_status = f"⚠️ Only {len(teammates)} driver(s) found for {selected_team}"
                 else:
                     # Fallback: show all available teams even if they might be problematic
                     all_teams_fallback = list(set([d['team'] for d in driver_info if d['team']]))
@@ -772,12 +779,83 @@ def main():
                         teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
                         if len(teammates) >= 2:
                             drivers_to_plot = teammates[:2]
-                            st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
+                            selection_status = f"🤝 Selected: {' vs '.join(drivers_to_plot)}"
                         else:
-                            st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
+                            selection_status = f"⚠️ Only {len(teammates)} driver(s) found for {selected_team}"
                     else:
-                        st.warning("No teams found")
+                        selection_status = "⚠️ No teams found"
                     
+            elif driver_mode == "P1 vs P2":
+                try:
+                    # First try using session results for proper P1 vs P2
+                    results = session.results
+                    if not results.empty:
+                        p1_driver = results.iloc[0]['Abbreviation']
+                        p2_driver = results.iloc[1]['Abbreviation']
+                        drivers_to_plot = [p1_driver, p2_driver]
+                        selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
+                    else:
+                        # Fallback to fastest two drivers from our sorted list
+                        if len(driver_info) >= 2:
+                            p1_driver = driver_info[0]['code']
+                            p2_driver = driver_info[1]['code']
+                            drivers_to_plot = [p1_driver, p2_driver]
+                            selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
+                        else:
+                            selection_status = "⚠️ Not enough drivers with lap times available"
+                except:
+                    # Fallback to fastest two drivers from our sorted list
+                    try:
+                        if len(driver_info) >= 2:
+                            p1_driver = driver_info[0]['code']
+                            p2_driver = driver_info[1]['code']
+                            drivers_to_plot = [p1_driver, p2_driver]
+                            st.success(f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)")
+                        else:
+                            st.warning("Not enough drivers with lap times available")
+                    except:
+                        selection_status = "⚠️ Could not determine P1 vs P2"
+    else:
+        # Mobile - in main area with enhanced UI
+        if driver_mode == "Specific Drivers":
+            selected_drivers = st.multiselect(
+                "Select 2 drivers",
+                [f"{d['code']} - {d['name']} ({d['lap_time_formatted']})" for d in driver_info],
+                max_selections=2
+            )
+            drivers_to_plot = [d.split(' - ')[0] for d in selected_drivers]
+            if len(drivers_to_plot) == 2:
+                selection_status = f"✅ Selected: {' vs '.join(drivers_to_plot)}"
+            elif len(drivers_to_plot) == 1:
+                selection_status = f"⚠️ Please select one more driver (currently: {drivers_to_plot[0]})"
+            else:
+                selection_status = "⚠️ Please select 2 drivers to compare"
+            
+        elif driver_mode == "Teammates":
+            # Get all teams, but be more lenient with filtering
+            all_teams = [d['team'] for d in driver_info if d['team']]
+            teams = list(set([team for team in all_teams if team and team.strip() != '' and team != 'Unknown']))
+            
+            if teams:
+                selected_team = st.selectbox("Select Team", teams, index=0)
+                teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
+                if len(teammates) >= 2:
+                    drivers_to_plot = teammates[:2]
+                    selection_status = f"🤝 Selected: {' vs '.join(drivers_to_plot)}"
+                else:
+                    selection_status = f"⚠️ Only {len(teammates)} driver(s) found for {selected_team}"
+            else:
+                # Fallback: show all available teams even if they might be problematic
+                all_teams_fallback = list(set([d['team'] for d in driver_info if d['team']]))
+                if all_teams_fallback:
+                    selected_team = st.selectbox("Select Team", all_teams_fallback, index=0)
+                    teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
+                    if len(teammates) >= 2:
+                        drivers_to_plot = teammates[:2]
+                        st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
+                    else:
+                        st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
+                
             elif driver_mode == "P1 vs P2":
                 try:
                     # First try using session results for proper P1 vs P2
@@ -807,74 +885,14 @@ def main():
                         else:
                             st.warning("Not enough drivers with lap times available")
                     except:
-                        st.warning("Could not determine P1 vs P2")
-    else:
-        # Mobile - in main area with enhanced UI
-        if driver_mode == "Specific Drivers":
-            selected_drivers = st.multiselect(
-                "Select 2 drivers",
-                [f"{d['code']} - {d['name']} ({d['lap_time_formatted']})" for d in driver_info],
-                max_selections=2
-            )
-            drivers_to_plot = [d.split(' - ')[0] for d in selected_drivers]
-            
-        elif driver_mode == "Teammates":
-            # Get all teams, but be more lenient with filtering
-            all_teams = [d['team'] for d in driver_info if d['team']]
-            teams = list(set([team for team in all_teams if team and team.strip() != '' and team != 'Unknown']))
-            
-            if teams:
-                selected_team = st.selectbox("Select Team", teams, index=0)
-                teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
-                if len(teammates) >= 2:
-                    drivers_to_plot = teammates[:2]
-                    st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
-                else:
-                    st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
-            else:
-                # Fallback: show all available teams even if they might be problematic
-                all_teams_fallback = list(set([d['team'] for d in driver_info if d['team']]))
-                if all_teams_fallback:
-                    selected_team = st.selectbox("Select Team", all_teams_fallback, index=0)
-                    teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
-                    if len(teammates) >= 2:
-                        drivers_to_plot = teammates[:2]
-                        st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
-                    else:
-                        st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
-                else:
-                    st.warning("No teams found")
-                
-        elif driver_mode == "P1 vs P2":
-            try:
-                # First try using session results for proper P1 vs P2
-                results = session.results
-                if not results.empty:
-                    p1_driver = results.iloc[0]['Abbreviation']
-                    p2_driver = results.iloc[1]['Abbreviation']
-                    drivers_to_plot = [p1_driver, p2_driver]
-                    st.success(f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)")
-                else:
-                    # Fallback to fastest two drivers from our sorted list
-                    if len(driver_info) >= 2:
-                        p1_driver = driver_info[0]['code']
-                        p2_driver = driver_info[1]['code']
-                        drivers_to_plot = [p1_driver, p2_driver]
-                        st.success(f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)")
-                    else:
-                        st.warning("Not enough drivers with lap times available")
-            except:
-                # Fallback to fastest two drivers from our sorted list
-                try:
-                    if len(driver_info) >= 2:
-                        p1_driver = driver_info[0]['code']
-                        p2_driver = driver_info[1]['code']
-                        drivers_to_plot = [p1_driver, p2_driver]
-                        st.success(f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)")
-                    else:
-                        st.warning("Not enough drivers with lap times available")
-                except:
-                    st.warning("Could not determine P1 vs P2")
+                        selection_status = "⚠️ Could not determine P1 vs P2"
+    
+    # Display selection status
+    if selection_status:
+        if "✅" in selection_status or "🏆" in selection_status or "🤝" in selection_status:
+            st.success(selection_status)
+        else:
+            st.warning(selection_status)
     
     # Mobile view toggle
     st.sidebar.markdown("---")
