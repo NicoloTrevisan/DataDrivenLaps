@@ -24,6 +24,10 @@ import requests
 from pathlib import Path
 import io
 import base64
+import warnings
+
+# Suppress deprecation warnings to keep the UI clean
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Page configuration
 st.set_page_config(
@@ -748,14 +752,17 @@ def main():
                 drivers_to_plot = [d.split(' - ')[0] for d in selected_drivers]
                 
             elif driver_mode == "Teammates":
-                teams = list(set([d['team'] for d in driver_info]))
-                selected_team = st.selectbox("Select Team", teams)
-                teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
-                if len(teammates) >= 2:
-                    drivers_to_plot = teammates[:2]
-                    st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
+                teams = list(set([d['team'] for d in driver_info if d['team'] and d['team'] != 'Unknown']))
+                if teams:
+                    selected_team = st.selectbox("Select Team", teams, index=0)
+                    teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
+                    if len(teammates) >= 2:
+                        drivers_to_plot = teammates[:2]
+                        st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
+                    else:
+                        st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
                 else:
-                    st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
+                    st.warning("No teams with multiple drivers found")
                     
             elif driver_mode == "P1 vs P2":
                 try:
@@ -798,14 +805,17 @@ def main():
             drivers_to_plot = [d.split(' - ')[0] for d in selected_drivers]
             
         elif driver_mode == "Teammates":
-            teams = list(set([d['team'] for d in driver_info]))
-            selected_team = st.selectbox("Select Team", teams)
-            teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
-            if len(teammates) >= 2:
-                drivers_to_plot = teammates[:2]
-                st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
+            teams = list(set([d['team'] for d in driver_info if d['team'] and d['team'] != 'Unknown']))
+            if teams:
+                selected_team = st.selectbox("Select Team", teams, index=0)
+                teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
+                if len(teammates) >= 2:
+                    drivers_to_plot = teammates[:2]
+                    st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
+                else:
+                    st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
             else:
-                st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
+                st.warning("No teams with multiple drivers found")
                 
         elif driver_mode == "P1 vs P2":
             try:
@@ -888,7 +898,7 @@ def main():
                     
                     # Display image
                     st.subheader("🏁 Your Data Driven Lap Image")
-                    st.image(image_buffer, use_column_width=True)
+                    st.image(image_buffer, use_container_width=True)
                     
                     # Download button
                     st.download_button(
@@ -949,7 +959,7 @@ def main():
                         
                         # Display image
                         st.subheader("🏁 Your Data Driven Lap Image")
-                        st.image(image_buffer, use_column_width=True)
+                        st.image(image_buffer, use_container_width=True)
                         
                         # Download button
                         st.download_button(
