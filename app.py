@@ -752,7 +752,10 @@ def main():
                 drivers_to_plot = [d.split(' - ')[0] for d in selected_drivers]
                 
             elif driver_mode == "Teammates":
-                teams = list(set([d['team'] for d in driver_info if d['team'] and d['team'] != 'Unknown']))
+                # Get all teams, but be more lenient with filtering
+                all_teams = [d['team'] for d in driver_info if d['team']]
+                teams = list(set([team for team in all_teams if team and team.strip() != '' and team != 'Unknown']))
+                
                 if teams:
                     selected_team = st.selectbox("Select Team", teams, index=0)
                     teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
@@ -762,7 +765,18 @@ def main():
                     else:
                         st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
                 else:
-                    st.warning("No teams with multiple drivers found")
+                    # Fallback: show all available teams even if they might be problematic
+                    all_teams_fallback = list(set([d['team'] for d in driver_info if d['team']]))
+                    if all_teams_fallback:
+                        selected_team = st.selectbox("Select Team", all_teams_fallback, index=0)
+                        teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
+                        if len(teammates) >= 2:
+                            drivers_to_plot = teammates[:2]
+                            st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
+                        else:
+                            st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
+                    else:
+                        st.warning("No teams found")
                     
             elif driver_mode == "P1 vs P2":
                 try:
@@ -805,7 +819,10 @@ def main():
             drivers_to_plot = [d.split(' - ')[0] for d in selected_drivers]
             
         elif driver_mode == "Teammates":
-            teams = list(set([d['team'] for d in driver_info if d['team'] and d['team'] != 'Unknown']))
+            # Get all teams, but be more lenient with filtering
+            all_teams = [d['team'] for d in driver_info if d['team']]
+            teams = list(set([team for team in all_teams if team and team.strip() != '' and team != 'Unknown']))
+            
             if teams:
                 selected_team = st.selectbox("Select Team", teams, index=0)
                 teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
@@ -815,7 +832,18 @@ def main():
                 else:
                     st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
             else:
-                st.warning("No teams with multiple drivers found")
+                # Fallback: show all available teams even if they might be problematic
+                all_teams_fallback = list(set([d['team'] for d in driver_info if d['team']]))
+                if all_teams_fallback:
+                    selected_team = st.selectbox("Select Team", all_teams_fallback, index=0)
+                    teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
+                    if len(teammates) >= 2:
+                        drivers_to_plot = teammates[:2]
+                        st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
+                    else:
+                        st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
+                else:
+                    st.warning("No teams found")
                 
         elif driver_mode == "P1 vs P2":
             try:
