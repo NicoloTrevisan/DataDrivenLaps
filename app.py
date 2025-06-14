@@ -852,40 +852,42 @@ def main():
                     teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
                     if len(teammates) >= 2:
                         drivers_to_plot = teammates[:2]
-                        st.success(f"🤝 Selected: {' vs '.join(drivers_to_plot)}")
+                        selection_status = f"🤝 Selected: {' vs '.join(drivers_to_plot)}"
                     else:
-                        st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
-                
-            elif driver_mode == "P1 vs P2":
-                try:
-                    # First try using session results for proper P1 vs P2
-                    results = session.results
-                    if not results.empty:
-                        p1_driver = results.iloc[0]['Abbreviation']
-                        p2_driver = results.iloc[1]['Abbreviation']
-                        drivers_to_plot = [p1_driver, p2_driver]
-                        st.success(f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)")
-                    else:
-                        # Fallback to fastest two drivers from our sorted list
-                        if len(driver_info) >= 2:
-                            p1_driver = driver_info[0]['code']
-                            p2_driver = driver_info[1]['code']
-                            drivers_to_plot = [p1_driver, p2_driver]
-                            st.success(f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)")
-                        else:
-                            st.warning("Not enough drivers with lap times available")
-                except:
+                        selection_status = f"⚠️ Only {len(teammates)} driver(s) found for {selected_team}"
+                else:
+                    selection_status = "⚠️ No teams found"
+                    
+        elif driver_mode == "P1 vs P2":
+            try:
+                # First try using session results for proper P1 vs P2
+                results = session.results
+                if not results.empty:
+                    p1_driver = results.iloc[0]['Abbreviation']
+                    p2_driver = results.iloc[1]['Abbreviation']
+                    drivers_to_plot = [p1_driver, p2_driver]
+                    selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
+                else:
                     # Fallback to fastest two drivers from our sorted list
-                    try:
-                        if len(driver_info) >= 2:
-                            p1_driver = driver_info[0]['code']
-                            p2_driver = driver_info[1]['code']
-                            drivers_to_plot = [p1_driver, p2_driver]
-                            st.success(f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)")
-                        else:
-                            st.warning("Not enough drivers with lap times available")
-                    except:
-                        selection_status = "⚠️ Could not determine P1 vs P2"
+                    if len(driver_info) >= 2:
+                        p1_driver = driver_info[0]['code']
+                        p2_driver = driver_info[1]['code']
+                        drivers_to_plot = [p1_driver, p2_driver]
+                        selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
+                    else:
+                        selection_status = "⚠️ Not enough drivers with lap times available"
+            except:
+                # Fallback to fastest two drivers from our sorted list
+                try:
+                    if len(driver_info) >= 2:
+                        p1_driver = driver_info[0]['code']
+                        p2_driver = driver_info[1]['code']
+                        drivers_to_plot = [p1_driver, p2_driver]
+                        selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
+                    else:
+                        selection_status = "⚠️ Not enough drivers with lap times available"
+                except:
+                    selection_status = "⚠️ Could not determine P1 vs P2"
     
     # Display selection status
     if selection_status:
