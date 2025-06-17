@@ -331,84 +331,68 @@ def get_available_sessions(year, gp_name):
 
 @st.cache_resource(show_spinner=False)
 def load_session_data(year, gp_name, session_name):
-    """Load session data with caching - using reliable GUI approach"""
+    """Load session data with caching"""
     try:
         session = fastf1.get_session(year, gp_name, session_name)
-        # Load with minimal data first for reliability (like the working GUI)
-        session.load(telemetry=False, weather=False, messages=False)
-        
-        # Check if we have basic lap data
-        if session.laps is None or session.laps.empty:
-            # Try loading with full data if minimal load has no laps
-            session.load()
-        
+        session.load()
         return session
     except Exception as e:
         raise Exception(f"Failed to load session data: {str(e)}")
 
 @st.cache_data(show_spinner=False)
 def get_session_drivers_with_times(_session):
-    """Get available drivers from session with their fastest lap times, using the reliable GUI approach"""
+    """
+    Get available drivers from the session, enriched with their fastest lap times.
+    This function is now more robust and relies on lap data as the source of truth.
+    """
     try:
-        # Simple approach that works: get drivers from laps data
-        if _session.laps is None or _session.laps.empty:
+        laps = _session.laps
+        if laps.empty:
+            st.error("No lap data available for this session.")
             return []
+
+        # Get all unique drivers from the laps data
+        driver_codes = laps['Driver'].unique()
         
-        # Get unique drivers from laps (this is what the working GUI uses)
-        available_drivers = sorted(_session.laps['Driver'].unique())
-        driver_info = []
-        
-        for driver_code in available_drivers:
+        driver_info_list = []
+        for code in driver_codes:
             try:
-                # Get driver info for team name
-                driver_info_obj = _session.get_driver(driver_code)
-                team_name = "Unknown"
-                driver_name = driver_code
-                
-                if driver_info_obj is not None and not driver_info_obj.empty:
-                    team_name = driver_info_obj.get('TeamName', 'Unknown')
-                    first_name = driver_info_obj.get('FirstName', '')
-                    last_name = driver_info_obj.get('LastName', '')
-                    if first_name and last_name:
-                        driver_name = f"{first_name} {last_name}"
-                
-                # Get fastest lap time for this driver
-                driver_laps = _session.laps.pick_driver(driver_code)
-                lap_time_val = float('inf')
-                lap_time_str = "No Time"
-                
-                if not driver_laps.empty:
-                    fastest_lap = driver_laps.pick_fastest()
-                    if not fastest_lap.empty and pd.notna(fastest_lap.get('LapTime')):
-                        lap_time_val = fastest_lap['LapTime'].total_seconds()
-                        lap_time_str = format_lap_time(lap_time_val)
-                
-                driver_info.append({
-                    'code': driver_code,
-                    'name': driver_name,
+                # Get driver's fastest lap
+                driver_laps = laps.pick_driver(code)
+                fastest_lap = driver_laps.pick_fastest()
+
+                if fastest_lap is None or pd.isna(fastest_lap['LapTime']):
+                    continue
+
+                # Get driver details
+                driver_details = _session.get_driver(code)
+                team_name = driver_details.get('TeamName', 'Unknown Team')
+                full_name = driver_details.get('FullName', code)
+
+                driver_info_list.append({
+                    'code': code,
+                    'name': full_name,
                     'team': team_name,
-                    'lap_time': lap_time_val,
-                    'lap_time_formatted': lap_time_str,
-                    'color': get_team_color(driver_code, _session, [driver_code], is_secondary=False)
+                    'lap_time': fastest_lap.LapTime.total_seconds(),
+                    'lap_time_formatted': format_lap_time(fastest_lap.LapTime.total_seconds())
                 })
-                
-            except Exception as e:
-                # Fallback for problematic drivers - still include them
-                driver_info.append({
-                    'code': driver_code,
-                    'name': driver_code,
-                    'team': 'Unknown',
-                    'lap_time': float('inf'),
-                    'lap_time_formatted': 'No Time',
-                    'color': '#808080'
-                })
+            except Exception:
+                # Ignore drivers if they have inconsistent data
+                continue
         
-        # Sort by lap time (fastest first)
-        driver_info.sort(key=lambda x: x['lap_time'])
-        return driver_info
-        
+        if not driver_info_list:
+            st.error("Could not retrieve any valid driver lap times for this session.")
+            return []
+
+        # Sort final list by lap time
+        driver_info_list.sort(key=lambda x: x['lap_time'])
+        return driver_info_list
+
     except Exception as e:
-        st.error(f"Error getting drivers: {str(e)}")
+        st.error(f"A critical error occurred while getting the driver list: {str(e)}")
+        # Adding a specific hint for a common FastF1 issue
+        if "The data you are trying to access has not been loaded yet" in str(e):
+             st.warning("Hint: This might be an issue with loading session data. Try refreshing or selecting a different session.")
         return []
 
 # Compatibility function for existing code
@@ -425,37 +409,27 @@ def prepare_driver_data(_session, drivers_to_plot, driver_selection_mode):
         with progress_placeholder.container():
             st.info("🔄 Preparing driver data...")
         
-        # Check if we need to reload session with full telemetry data
-        # (The initial load might have been minimal for driver selection)
-        needs_full_reload = False
-        try:
-            # Test if we can get telemetry from the first driver
-            test_driver = drivers_to_plot[0]
-            test_laps = _session.laps.pick_driver(test_driver)
-            if not test_laps.empty:
-                test_fastest = test_laps.pick_fastest()
-                if not test_fastest.empty:
-                    test_telemetry = test_fastest.get_telemetry()
-                    if test_telemetry.empty:
-                        needs_full_reload = True
-            else:
-                needs_full_reload = True
-        except:
-            needs_full_reload = True
-        
-        if needs_full_reload:
-            progress_placeholder.info("🔄 Loading full telemetry data...")
-            # Reload with full data for telemetry
-            _session.load()
-        
         # Get fastest laps for selected drivers
         driver_data_dict = {}
         
         for driver_code in drivers_to_plot:
             progress_placeholder.info(f"🔄 Loading data for {driver_code}...")
             
-            # Get driver laps - use the simple approach that works
+            # Try to get driver laps using abbreviation first, then fallback to car number
             driver_laps = _session.laps.pick_driver(driver_code)
+            
+            # If no laps found with abbreviation, try to find by car number
+            if driver_laps.empty:
+                # Look for the car number corresponding to this abbreviation
+                try:
+                    for car_num in _session.drivers:
+                        driver_info = _session.get_driver(car_num)
+                        if (driver_info is not None and not driver_info.empty and 
+                            driver_info.get('Abbreviation') == driver_code):
+                            driver_laps = _session.laps.pick_driver(car_num)
+                            break
+                except:
+                    pass
             
             if driver_laps.empty:
                 raise Exception(f"No lap data found for driver {driver_code}")
@@ -700,6 +674,9 @@ def main():
     st.markdown('<h1 class="main-header">🏎️ F1 Data Driven Laps</h1>', unsafe_allow_html=True)
     st.markdown("### Create stunning F1 data-driven lap images from telemetry data")
     
+    # Data availability info
+    st.info("💡 **Data Availability:** Complete data available for 2018-2024. 2025 data may be limited until the season progresses.")
+    
     # Responsive layout - use full width on mobile, sidebar on desktop
     if st.session_state.get('mobile_view', False):
         # Mobile layout - everything in main area
@@ -708,7 +685,7 @@ def main():
         # Mobile-friendly input layout
         col_year, col_gp = st.columns([1, 2])
         with col_year:
-            year = st.number_input("Year", min_value=2018, max_value=2025, value=2025, step=1)
+            year = st.number_input("Year", min_value=2018, max_value=2025, value=2024, step=1)
         with col_gp:
             gp_options = get_available_gps(year)
             if not gp_options:
@@ -721,15 +698,7 @@ def main():
         if not session_options:
             st.error("No session data available for selected Grand Prix")
             return
-        
-        # Set default session to Qualifying if available, otherwise first option
-        default_session_index = 0
-        for i, (name, display) in enumerate(session_options):
-            if display == "Qualifying":
-                default_session_index = i
-                break
-        
-        session_display = st.selectbox("Session", [s[1] for s in session_options], index=default_session_index)
+        session_display = st.selectbox("Session", [s[1] for s in session_options], index=0)
         session_name = next(s[0] for s in session_options if s[1] == session_display)
         
         st.header("👥 Driver Selection")
@@ -741,7 +710,7 @@ def main():
             st.header("🏁 Race Selection")
             
             # Year selection
-            year = st.number_input("Year", min_value=2018, max_value=2025, value=2025, step=1)
+            year = st.number_input("Year", min_value=2018, max_value=2025, value=2024, step=1)
             
             # GP selection
             gp_options = get_available_gps(year)
@@ -757,14 +726,7 @@ def main():
                 st.error("No session data available for selected Grand Prix")
                 return
             
-            # Set default session to Qualifying if available, otherwise first option
-            default_session_index = 0
-            for i, (name, display) in enumerate(session_options):
-                if display == "Qualifying":
-                    default_session_index = i
-                    break
-            
-            session_display = st.selectbox("Session", [s[1] for s in session_options], index=default_session_index)
+            session_display = st.selectbox("Session", [s[1] for s in session_options], index=0)
             session_name = next(s[0] for s in session_options if s[1] == session_display)
             
             st.header("👥 Driver Selection")
@@ -793,14 +755,11 @@ def main():
                 st.info("• 2025 data may not be available yet")
                 return
                 
-    except Exception:
-        # Catch any exception during session loading and provide a user-friendly message
-        st.info("💡 **Load a session to visualize it!**")
-        st.info("Please select the year, Grand Prix, and session above to get started.")
-        st.info("If you've selected a session but see this message, the data might not be available yet, or there was a network issue.")
-        st.info("**Suggestions:**")
-        st.info("• Try selecting a different session or year (e.g., 2024 Monaco Qualifying).")
-        st.info("• Check your internet connection.")
+    except Exception as e:
+        st.error(f"Error loading session: {str(e)}")
+        st.info("💡 **Suggestions:**")
+        st.info("• Try a different year (2018-2024 have complete data)")
+        st.info("• Try a different Grand Prix or session")
         return
     
     # Driver selection logic (common for both layouts)
@@ -973,9 +932,10 @@ def main():
     if len(drivers_to_plot) == 2:
         st.markdown(f'<div class="status-box success-box">✅ Ready to analyze: <strong>{drivers_to_plot[0]} vs {drivers_to_plot[1]}</strong></div>', unsafe_allow_html=True)
         
+        # Responsive column layout
         if st.session_state.get('mobile_view', False):
             # Mobile: single column layout
-            if st.button("🖼️ Generate Data Driven Lap Image", type="primary"):
+            if st.button("🖼️ Generate Data Driven Lap Image", type="primary", use_container_width=True):
                 try:
                     # Prepare data
                     with st.spinner("🏎️ Preparing driver data..."):
@@ -1012,14 +972,15 @@ def main():
                     
                     # Display image
                     st.subheader("🏁 Your Data Driven Lap Image")
-                    st.image(image_buffer)
+                    st.image(image_buffer, use_container_width=True)
                     
                     # Download button
                     st.download_button(
                         label="📥 Download Image",
                         data=image_buffer.getvalue(),
                         file_name=f"Data_Driven_Lap_{year}_{gp_name}_{session_display}_{drivers_to_plot[0]}_vs_{drivers_to_plot[1]}.png",
-                        mime="image/png"
+                        mime="image/png",
+                        use_container_width=True
                     )
                         
                 except Exception as e:
@@ -1033,7 +994,7 @@ def main():
             col1, col2 = st.columns([2, 1])
             
             with col1:
-                if st.button("🖼️ Generate Data Driven Lap Image", type="primary"):
+                if st.button("🖼️ Generate Data Driven Lap Image", type="primary", use_container_width=True):
                     try:
                         # Prepare data
                         with st.spinner("🏎️ Preparing driver data..."):
@@ -1072,14 +1033,15 @@ def main():
                         
                         # Display image
                         st.subheader("🏁 Your Data Driven Lap Image")
-                        st.image(image_buffer)
+                        st.image(image_buffer, use_container_width=True)
                         
                         # Download button
                         st.download_button(
                             label="📥 Download Image",
                             data=image_buffer.getvalue(),
                             file_name=f"Data_Driven_Lap_{year}_{gp_name}_{session_display}_{drivers_to_plot[0]}_vs_{drivers_to_plot[1]}.png",
-                            mime="image/png"
+                            mime="image/png",
+                            use_container_width=True
                         )
                             
                     except Exception as e:
