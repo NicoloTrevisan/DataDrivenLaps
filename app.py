@@ -86,6 +86,10 @@ st.markdown("""
             border-radius: 8px;
             margin: 0.5rem 0;
         }
+        .main .block-container {
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
     }
     
     /* Desktop optimizations */
@@ -96,7 +100,15 @@ st.markdown("""
         .main .block-container {
             padding-left: 2rem;
             padding-right: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
         }
+    }
+    
+    /* Image container improvements */
+    .stImage > img {
+        border-radius: 12px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.1);
     }
     
     /* Improved button styling */
@@ -678,82 +690,46 @@ def main():
     # Quick guide
     st.info("🚀 **Quick Guide:** Select any two F1 drivers and instantly see which sections of the track each driver is faster on. The track is color-coded to show speed differences - perfect for analyzing racing lines, braking points, and acceleration zones. Generate high-quality images ready for download and sharing!")
     
-    # Responsive layout - use full width on mobile, sidebar on desktop
-    if st.session_state.get('mobile_view', False):
-        # Mobile layout - everything in main area
+    # Simplified layout - use sidebar for controls
+    with st.sidebar:
         st.header("🏁 Race Selection")
         
-        # Mobile-friendly input layout
-        col_year, col_gp = st.columns([1, 2])
-        with col_year:
-            year = st.number_input("Year", min_value=2018, max_value=2025, value=2025, step=1)
-        with col_gp:
-            gp_options = get_available_gps(year)
-            if not gp_options:
-                st.error("No Grand Prix data available for selected year")
-                return
-            # Try to default to a proper race instead of testing
-            default_gp_index = 0
-            if gp_options:
-                # Look for a proper race (avoid testing sessions)
-                for i, gp in enumerate(gp_options):
-                    if 'testing' not in gp.lower() and 'test' not in gp.lower():
-                        default_gp_index = i
-                        break
-            gp_name = st.selectbox("Grand Prix", gp_options, index=default_gp_index)
+        # Year selection
+        year = st.number_input("Year", min_value=2018, max_value=2025, value=2025, step=1)
+        
+        # GP selection
+        gp_options = get_available_gps(year)
+        if not gp_options:
+            st.error("No Grand Prix data available for selected year")
+            return
+        
+        # Try to default to a proper race instead of testing
+        default_gp_index = 0
+        if gp_options:
+            # Look for a proper race (avoid testing sessions)
+            for i, gp in enumerate(gp_options):
+                if 'testing' not in gp.lower() and 'test' not in gp.lower():
+                    default_gp_index = i
+                    break
+        gp_name = st.selectbox("Grand Prix", gp_options, index=default_gp_index)
         
         # Session selection
         session_options = get_available_sessions(year, gp_name)
         if not session_options:
             st.error("No session data available for selected Grand Prix")
             return
+        
         session_display = st.selectbox("Session", [s[1] for s in session_options], index=0)
         session_name = next(s[0] for s in session_options if s[1] == session_display)
         
         st.header("👥 Driver Selection")
-        driver_mode = st.selectbox("Selection Mode", ["Specific Drivers", "Teammates", "P1 vs P2"], index=2)
         
-    else:
-        # Desktop layout - use sidebar
-        with st.sidebar:
-            st.header("🏁 Race Selection")
-            
-            # Year selection
-            year = st.number_input("Year", min_value=2018, max_value=2025, value=2025, step=1)
-            
-            # GP selection
-            gp_options = get_available_gps(year)
-            if not gp_options:
-                st.error("No Grand Prix data available for selected year")
-                return
-            
-            # Try to default to a proper race instead of testing
-            default_gp_index = 0
-            if gp_options:
-                # Look for a proper race (avoid testing sessions)
-                for i, gp in enumerate(gp_options):
-                    if 'testing' not in gp.lower() and 'test' not in gp.lower():
-                        default_gp_index = i
-                        break
-            gp_name = st.selectbox("Grand Prix", gp_options, index=default_gp_index)
-            
-            # Session selection
-            session_options = get_available_sessions(year, gp_name)
-            if not session_options:
-                st.error("No session data available for selected Grand Prix")
-                return
-            
-            session_display = st.selectbox("Session", [s[1] for s in session_options], index=0)
-            session_name = next(s[0] for s in session_options if s[1] == session_display)
-            
-            st.header("👥 Driver Selection")
-            
-            # Driver selection mode
-            driver_mode = st.radio(
-                "Selection Mode",
-                ["Specific Drivers", "Teammates", "P1 vs P2"],
-                index=2
-            )
+        # Driver selection mode
+        driver_mode = st.radio(
+            "Selection Mode",
+            ["Specific Drivers", "Teammates", "P1 vs P2"],
+            index=2
+        )
     
     # Load session for driver selection (common for both layouts)
     # Create a unique session key to avoid cached/stale data
@@ -789,94 +765,11 @@ def main():
         st.info("• Try a different Grand Prix or session")
         return
     
-    # Driver selection logic (common for both layouts)
+    # Driver selection logic - continue in sidebar
     drivers_to_plot = []
     selection_status = ""
     
-    # Mobile/Desktop responsive driver selection
-    if not st.session_state.get('mobile_view', False):
-        # Desktop - continue in sidebar
-        with st.sidebar:
-            if driver_mode == "Specific Drivers":
-                selected_drivers = st.multiselect(
-                    "Select 2 drivers",
-                    [f"{d['code']} - {d['name']} ({d['lap_time_formatted']})" for d in driver_info],
-                    max_selections=2
-                )
-                drivers_to_plot = [d.split(' - ')[0] for d in selected_drivers]
-                if len(drivers_to_plot) == 2:
-                    selection_status = f"✅ Selected: {' vs '.join(drivers_to_plot)}"
-                elif len(drivers_to_plot) == 1:
-                    selection_status = f"⚠️ Please select one more driver (currently: {drivers_to_plot[0]})"
-                else:
-                    selection_status = "⚠️ Please select 2 drivers to compare"
-                
-            elif driver_mode == "Teammates":
-                # Get all teams, but be more lenient with filtering
-                all_teams = [d['team'] for d in driver_info if d['team']]
-                teams = list(set([team for team in all_teams if team and team.strip() != '' and team != 'Unknown']))
-                
-                if teams:
-                    selected_team = st.selectbox("Select Team", teams, index=0)
-                    teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
-                    if len(teammates) >= 2:
-                        drivers_to_plot = teammates[:2]
-                        selection_status = f"🤝 Selected: {' vs '.join(drivers_to_plot)}"
-                    else:
-                        selection_status = f"⚠️ Only {len(teammates)} driver(s) found for {selected_team}"
-                else:
-                    # Fallback: show all available teams even if they might be problematic
-                    all_teams_fallback = list(set([d['team'] for d in driver_info if d['team']]))
-                    if all_teams_fallback:
-                        selected_team = st.selectbox("Select Team", all_teams_fallback, index=0)
-                        teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
-                        if len(teammates) >= 2:
-                            drivers_to_plot = teammates[:2]
-                            selection_status = f"🤝 Selected: {' vs '.join(drivers_to_plot)}"
-                        else:
-                            selection_status = f"⚠️ Only {len(teammates)} driver(s) found for {selected_team}"
-                    else:
-                        selection_status = "⚠️ No teams found"
-                    
-            elif driver_mode == "P1 vs P2":
-                # Only auto-select if we have valid driver info and session data
-                if driver_info and len(driver_info) >= 2:
-                    try:
-                        # First try using session results for proper P1 vs P2
-                        results = session.results
-                        if not results.empty:
-                            p1_driver = results.iloc[0]['Abbreviation']
-                            p2_driver = results.iloc[1]['Abbreviation']
-                            # Verify these drivers are in our driver_info list
-                            driver_codes = [d['code'] for d in driver_info]
-                            if p1_driver in driver_codes and p2_driver in driver_codes:
-                                drivers_to_plot = [p1_driver, p2_driver]
-                                selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
-                            else:
-                                # Fallback to fastest two from our list
-                                p1_driver = driver_info[0]['code']
-                                p2_driver = driver_info[1]['code']
-                                drivers_to_plot = [p1_driver, p2_driver]
-                                selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
-                        else:
-                            # Fallback to fastest two drivers from our sorted list
-                            p1_driver = driver_info[0]['code']
-                            p2_driver = driver_info[1]['code']
-                            drivers_to_plot = [p1_driver, p2_driver]
-                            selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
-                    except Exception as e:
-                        # Fallback to fastest two drivers from our sorted list
-                        try:
-                            p1_driver = driver_info[0]['code']
-                            p2_driver = driver_info[1]['code']
-                            drivers_to_plot = [p1_driver, p2_driver]
-                            selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
-                        except:
-                            selection_status = "⚠️ Could not determine P1 vs P2"
-                else:
-                    selection_status = "⚠️ Please wait for session data to load..."
-    else:
-        # Mobile - in main area with enhanced UI
+    with st.sidebar:
         if driver_mode == "Specific Drivers":
             selected_drivers = st.multiselect(
                 "Select 2 drivers",
@@ -917,7 +810,7 @@ def main():
                         selection_status = f"⚠️ Only {len(teammates)} driver(s) found for {selected_team}"
                 else:
                     selection_status = "⚠️ No teams found"
-                    
+                
         elif driver_mode == "P1 vs P2":
             # Only auto-select if we have valid driver info and session data
             if driver_info and len(driver_info) >= 2:
@@ -963,139 +856,68 @@ def main():
         else:
             st.warning(selection_status)
     
-    # Mobile view toggle
+    # Debug cache clearing button
     st.sidebar.markdown("---")
-    if st.sidebar.button("📱 Toggle Mobile View"):
-        st.session_state.mobile_view = not st.session_state.get('mobile_view', False)
-        st.rerun()
-    
-    # Debug cache clearing button (temporary)
     if st.sidebar.button("🔄 Clear Cache & Refresh"):
         st.cache_data.clear()
         st.cache_resource.clear()
         st.session_state.clear()
         st.rerun()
     
-    # Main content area (responsive)
+    # Main content area
     if len(drivers_to_plot) == 2:
         st.markdown(f'<div class="status-box success-box">✅ Ready to analyze: <strong>{drivers_to_plot[0]} vs {drivers_to_plot[1]}</strong></div>', unsafe_allow_html=True)
         
-        # Responsive column layout
-        if st.session_state.get('mobile_view', False):
-            # Mobile: single column layout
-            if st.button("🖼️ Generate Data Driven Lap Image", type="primary", use_container_width=True):
-                try:
-                    # Prepare data
-                    with st.spinner("🏎️ Preparing driver data..."):
-                        driver_data = prepare_driver_data(session, drivers_to_plot, driver_mode)
-                    
-                    # Display lap time comparison with proper formatting
-                    st.subheader("📊 Lap Time Comparison")
-                    
-                    lap_time_1 = driver_data[drivers_to_plot[0]]['lap_time']
-                    lap_time_2 = driver_data[drivers_to_plot[1]]['lap_time']
-                    delta = abs(lap_time_1 - lap_time_2)
-                    
-                    # Mobile-friendly metrics layout
-                    st.metric(
-                        f"{drivers_to_plot[0]} (Fastest Lap)",
-                        format_lap_time(lap_time_1),
-                        f"{driver_data[drivers_to_plot[0]]['compound']}"
+        # Single column layout for clean design
+        if st.button("🖼️ Generate Data Driven Lap Image", type="primary", use_container_width=True):
+            try:
+                # Prepare data
+                with st.spinner("🏎️ Preparing driver data..."):
+                    driver_data = prepare_driver_data(session, drivers_to_plot, driver_mode)
+                
+                # Generate image
+                with st.spinner("🏎️ Creating data-driven lap image..."):
+                    image_buffer = create_data_driven_lap_image(
+                        driver_data, session, drivers_to_plot, year, gp_name, session_display
                     )
-                    st.metric(
-                        f"{drivers_to_plot[1]} (Fastest Lap)",
-                        format_lap_time(lap_time_2),
-                        f"{driver_data[drivers_to_plot[1]]['compound']}"
-                    )
-                    
-                    st.info(f"⏱️ Gap: {delta:.3f} seconds")
-                    
-                    # Generate image
-                    st.subheader("🎨 Image Generation")
-                    
-                    with st.spinner("🏎️ Creating data-driven lap image..."):
-                        image_buffer = create_data_driven_lap_image(
-                            driver_data, session, drivers_to_plot, year, gp_name, session_display
-                        )
-                    
-                    # Display image
-                    st.subheader("🏁 Your Data Driven Lap Image")
+                
+                # Display image with responsive sizing
+                st.subheader("🏁 Your Data Driven Lap Image")
+                
+                # Add responsive image sizing with CSS
+                st.markdown("""
+                <style>
+                .responsive-image {
+                    max-width: 600px;
+                    width: 100%;
+                    height: auto;
+                    margin: 0 auto;
+                    display: block;
+                }
+                @media (max-width: 768px) {
+                    .responsive-image {
+                        max-width: 100%;
+                    }
+                }
+                </style>
+                """, unsafe_allow_html=True)
+                
+                # Display image with responsive container
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:
                     st.image(image_buffer, use_container_width=True)
+                
+                # Download button
+                st.download_button(
+                    label="📥 Download High-Resolution Image",
+                    data=image_buffer.getvalue(),
+                    file_name=f"Data_Driven_Lap_{year}_{gp_name}_{session_display}_{drivers_to_plot[0]}_vs_{drivers_to_plot[1]}.png",
+                    mime="image/png",
+                    use_container_width=True
+                )
                     
-                    # Download button
-                    st.download_button(
-                        label="📥 Download Image",
-                        data=image_buffer.getvalue(),
-                        file_name=f"Data_Driven_Lap_{year}_{gp_name}_{session_display}_{drivers_to_plot[0]}_vs_{drivers_to_plot[1]}.png",
-                        mime="image/png",
-                        use_container_width=True
-                    )
-                        
-                except Exception as e:
-                    st.error(f"❌ Error generating image: {str(e)}")
-            
-
-            
-        else:
-            # Desktop: two-column layout
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                if st.button("🖼️ Generate Data Driven Lap Image", type="primary", use_container_width=True):
-                    try:
-                        # Prepare data
-                        with st.spinner("🏎️ Preparing driver data..."):
-                            driver_data = prepare_driver_data(session, drivers_to_plot, driver_mode)
-                        
-                        # Display lap time comparison with proper formatting
-                        st.subheader("📊 Lap Time Comparison")
-                        
-                        lap_time_1 = driver_data[drivers_to_plot[0]]['lap_time']
-                        lap_time_2 = driver_data[drivers_to_plot[1]]['lap_time']
-                        delta = abs(lap_time_1 - lap_time_2)
-                        
-                        col_a, col_b = st.columns(2)
-                        with col_a:
-                            st.metric(
-                                f"{drivers_to_plot[0]} (Fastest Lap)",
-                                format_lap_time(lap_time_1),
-                                f"{driver_data[drivers_to_plot[0]]['compound']}"
-                            )
-                        with col_b:
-                            st.metric(
-                                f"{drivers_to_plot[1]} (Fastest Lap)",
-                                format_lap_time(lap_time_2),
-                                f"{driver_data[drivers_to_plot[1]]['compound']}"
-                            )
-                        
-                        st.info(f"⏱️ Gap: {delta:.3f} seconds")
-                        
-                        # Generate image
-                        st.subheader("🎨 Image Generation")
-                        
-                        with st.spinner("🏎️ Creating data-driven lap image..."):
-                            image_buffer = create_data_driven_lap_image(
-                                driver_data, session, drivers_to_plot, year, gp_name, session_display
-                            )
-                        
-                        # Display image
-                        st.subheader("🏁 Your Data Driven Lap Image")
-                        st.image(image_buffer, use_container_width=True)
-                        
-                        # Download button
-                        st.download_button(
-                            label="📥 Download Image",
-                            data=image_buffer.getvalue(),
-                            file_name=f"Data_Driven_Lap_{year}_{gp_name}_{session_display}_{drivers_to_plot[0]}_vs_{drivers_to_plot[1]}.png",
-                            mime="image/png",
-                            use_container_width=True
-                        )
-                            
-                    except Exception as e:
-                        st.error(f"❌ Error generating image: {str(e)}")
-            
-            with col2:
-                st.empty()  # Keep the column structure but remove the tips
+            except Exception as e:
+                st.error(f"❌ Error generating image: {str(e)}")
     
     else:
         st.markdown('<div class="status-box info-box">ℹ️ Please select exactly 2 drivers to generate a data driven lap image.</div>', unsafe_allow_html=True)
