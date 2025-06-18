@@ -340,10 +340,11 @@ def load_session_data(year, gp_name, session_name):
         raise Exception(f"Failed to load session data: {str(e)}")
 
 @st.cache_data(show_spinner=False)
-def get_session_drivers_with_times(_session):
+def get_session_drivers_with_times(_session, year, gp_name, session_name):
     """
     Get available drivers from the session, enriched with their fastest lap times.
     This function is now more robust and relies on lap data as the source of truth.
+    Updated to include session parameters for proper cache invalidation.
     """
     try:
         laps = _session.laps
@@ -691,7 +692,15 @@ def main():
             if not gp_options:
                 st.error("No Grand Prix data available for selected year")
                 return
-            gp_name = st.selectbox("Grand Prix", gp_options, index=0)
+            # Try to default to a proper race instead of testing
+            default_gp_index = 0
+            if gp_options:
+                # Look for a proper race (avoid testing sessions)
+                for i, gp in enumerate(gp_options):
+                    if 'testing' not in gp.lower() and 'test' not in gp.lower():
+                        default_gp_index = i
+                        break
+            gp_name = st.selectbox("Grand Prix", gp_options, index=default_gp_index)
         
         # Session selection
         session_options = get_available_sessions(year, gp_name)
@@ -718,7 +727,15 @@ def main():
                 st.error("No Grand Prix data available for selected year")
                 return
             
-            gp_name = st.selectbox("Grand Prix", gp_options, index=0)
+            # Try to default to a proper race instead of testing
+            default_gp_index = 0
+            if gp_options:
+                # Look for a proper race (avoid testing sessions)
+                for i, gp in enumerate(gp_options):
+                    if 'testing' not in gp.lower() and 'test' not in gp.lower():
+                        default_gp_index = i
+                        break
+            gp_name = st.selectbox("Grand Prix", gp_options, index=default_gp_index)
             
             # Session selection
             session_options = get_available_sessions(year, gp_name)
@@ -739,10 +756,20 @@ def main():
             )
     
     # Load session for driver selection (common for both layouts)
+    # Create a unique session key to avoid cached/stale data
+    session_key = f"{year}_{gp_name}_{session_name}"
+    if 'current_session_key' not in st.session_state:
+        st.session_state.current_session_key = ""
+    
+    # Reset driver selection if session changed
+    if st.session_state.current_session_key != session_key:
+        st.session_state.current_session_key = session_key
+        st.session_state.session_loaded = False
+        
     try:
         with st.spinner("Loading session data..."):
             session = load_session_data(year, gp_name, session_name)
-            driver_info = get_session_drivers_with_times(session)
+            driver_info = get_session_drivers_with_times(session, year, gp_name, session_name)
             st.session_state.session_loaded = True
             
             # Check if we have driver data
@@ -812,35 +839,42 @@ def main():
                         selection_status = "⚠️ No teams found"
                     
             elif driver_mode == "P1 vs P2":
-                try:
-                    # First try using session results for proper P1 vs P2
-                    results = session.results
-                    if not results.empty:
-                        p1_driver = results.iloc[0]['Abbreviation']
-                        p2_driver = results.iloc[1]['Abbreviation']
-                        drivers_to_plot = [p1_driver, p2_driver]
-                        selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
-                    else:
-                        # Fallback to fastest two drivers from our sorted list
-                        if len(driver_info) >= 2:
-                            p1_driver = driver_info[0]['code']
-                            p2_driver = driver_info[1]['code']
-                            drivers_to_plot = [p1_driver, p2_driver]
-                            selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
-                        else:
-                            selection_status = "⚠️ Not enough drivers with lap times available"
-                except:
-                    # Fallback to fastest two drivers from our sorted list
+                # Only auto-select if we have valid driver info and session data
+                if driver_info and len(driver_info) >= 2:
                     try:
-                        if len(driver_info) >= 2:
+                        # First try using session results for proper P1 vs P2
+                        results = session.results
+                        if not results.empty:
+                            p1_driver = results.iloc[0]['Abbreviation']
+                            p2_driver = results.iloc[1]['Abbreviation']
+                            # Verify these drivers are in our driver_info list
+                            driver_codes = [d['code'] for d in driver_info]
+                            if p1_driver in driver_codes and p2_driver in driver_codes:
+                                drivers_to_plot = [p1_driver, p2_driver]
+                                selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
+                            else:
+                                # Fallback to fastest two from our list
+                                p1_driver = driver_info[0]['code']
+                                p2_driver = driver_info[1]['code']
+                                drivers_to_plot = [p1_driver, p2_driver]
+                                selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
+                        else:
+                            # Fallback to fastest two drivers from our sorted list
                             p1_driver = driver_info[0]['code']
                             p2_driver = driver_info[1]['code']
                             drivers_to_plot = [p1_driver, p2_driver]
                             selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
-                        else:
-                            selection_status = "⚠️ Not enough drivers with lap times available"
-                    except:
-                        selection_status = "⚠️ Could not determine P1 vs P2"
+                    except Exception as e:
+                        # Fallback to fastest two drivers from our sorted list
+                        try:
+                            p1_driver = driver_info[0]['code']
+                            p2_driver = driver_info[1]['code']
+                            drivers_to_plot = [p1_driver, p2_driver]
+                            selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
+                        except:
+                            selection_status = "⚠️ Could not determine P1 vs P2"
+                else:
+                    selection_status = "⚠️ Please wait for session data to load..."
     else:
         # Mobile - in main area with enhanced UI
         if driver_mode == "Specific Drivers":
@@ -885,35 +919,42 @@ def main():
                     selection_status = "⚠️ No teams found"
                     
         elif driver_mode == "P1 vs P2":
-            try:
-                # First try using session results for proper P1 vs P2
-                results = session.results
-                if not results.empty:
-                    p1_driver = results.iloc[0]['Abbreviation']
-                    p2_driver = results.iloc[1]['Abbreviation']
-                    drivers_to_plot = [p1_driver, p2_driver]
-                    selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
-                else:
-                    # Fallback to fastest two drivers from our sorted list
-                    if len(driver_info) >= 2:
-                        p1_driver = driver_info[0]['code']
-                        p2_driver = driver_info[1]['code']
-                        drivers_to_plot = [p1_driver, p2_driver]
-                        selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
-                    else:
-                        selection_status = "⚠️ Not enough drivers with lap times available"
-            except:
-                # Fallback to fastest two drivers from our sorted list
+            # Only auto-select if we have valid driver info and session data
+            if driver_info and len(driver_info) >= 2:
                 try:
-                    if len(driver_info) >= 2:
+                    # First try using session results for proper P1 vs P2
+                    results = session.results
+                    if not results.empty:
+                        p1_driver = results.iloc[0]['Abbreviation']
+                        p2_driver = results.iloc[1]['Abbreviation']
+                        # Verify these drivers are in our driver_info list
+                        driver_codes = [d['code'] for d in driver_info]
+                        if p1_driver in driver_codes and p2_driver in driver_codes:
+                            drivers_to_plot = [p1_driver, p2_driver]
+                            selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
+                        else:
+                            # Fallback to fastest two from our list
+                            p1_driver = driver_info[0]['code']
+                            p2_driver = driver_info[1]['code']
+                            drivers_to_plot = [p1_driver, p2_driver]
+                            selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
+                    else:
+                        # Fallback to fastest two drivers from our sorted list
                         p1_driver = driver_info[0]['code']
                         p2_driver = driver_info[1]['code']
                         drivers_to_plot = [p1_driver, p2_driver]
                         selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
-                    else:
-                        selection_status = "⚠️ Not enough drivers with lap times available"
-                except:
-                    selection_status = "⚠️ Could not determine P1 vs P2"
+                except Exception as e:
+                    # Fallback to fastest two drivers from our sorted list
+                    try:
+                        p1_driver = driver_info[0]['code']
+                        p2_driver = driver_info[1]['code']
+                        drivers_to_plot = [p1_driver, p2_driver]
+                        selection_status = f"🏆 Selected: {p1_driver} (P1) vs {p2_driver} (P2)"
+                    except:
+                        selection_status = "⚠️ Could not determine P1 vs P2"
+            else:
+                selection_status = "⚠️ Please wait for session data to load..."
     
     # Display selection status
     if selection_status:
@@ -926,6 +967,13 @@ def main():
     st.sidebar.markdown("---")
     if st.sidebar.button("📱 Toggle Mobile View"):
         st.session_state.mobile_view = not st.session_state.get('mobile_view', False)
+        st.rerun()
+    
+    # Debug cache clearing button (temporary)
+    if st.sidebar.button("🔄 Clear Cache & Refresh"):
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.session_state.clear()
         st.rerun()
     
     # Main content area (responsive)
