@@ -641,9 +641,6 @@ def create_data_driven_lap_image(driver_data_dict, _session, drivers_to_plot, ye
         ax_tyre_info.text(0.75, 0.2, p2_life_text, fontsize=12, color=clean_white, ha='center')
         ax_tyre_info.axis('off')
         
-        # Remove the lap times comparison section - info is already in the image
-        ax_sectors.axis('off')
-        
         # Final info
         ax_timer.text(0.5, 0.5, '🏁 FASTEST LAP COMPARISON', 
                      ha='center', va='center', fontsize=20, color=clean_white, fontweight='bold')
