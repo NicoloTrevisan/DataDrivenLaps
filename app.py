@@ -673,10 +673,10 @@ def main():
     
     # Header
     st.markdown('<h1 class="main-header">🏎️ F1 Data Driven Laps</h1>', unsafe_allow_html=True)
-    st.markdown("### Create stunning F1 data-driven lap images from telemetry data")
+    st.markdown("### Compare driver performance with interactive track visualizations")
     
-    # Data availability info
-    st.info("💡 **Data Availability:** Complete data available for 2018-2024. 2025 data may be limited until the season progresses.")
+    # Quick guide
+    st.info("🚀 **Quick Guide:** Select any two F1 drivers and instantly see which sections of the track each driver is faster on. The track is color-coded to show speed differences - perfect for analyzing racing lines, braking points, and acceleration zones. Generate high-quality images ready for download and sharing!")
     
     # Responsive layout - use full width on mobile, sidebar on desktop
     if st.session_state.get('mobile_view', False):
@@ -1034,8 +1034,7 @@ def main():
                 except Exception as e:
                     st.error(f"❌ Error generating image: {str(e)}")
             
-            # Mobile tips
-            st.info("💡 **Mobile Tips:**\n🏎️ Image generation takes just a few seconds\n🏎️ Optimized for mobile sharing\n🏎️ High resolution PNG output\n🏎️ Perfect for social media")
+
             
         else:
             # Desktop: two-column layout
@@ -1096,7 +1095,7 @@ def main():
                         st.error(f"❌ Error generating image: {str(e)}")
             
             with col2:
-                st.info("💡 **Tips:**\n🏎️ Image generation takes just a few seconds\n🏎️ Mobile-optimized format (9:16)\n🏎️ Perfect for social media sharing\n🏎️ High resolution PNG output")
+                st.empty()  # Keep the column structure but remove the tips
     
     else:
         st.markdown('<div class="status-box info-box">ℹ️ Please select exactly 2 drivers to generate a data driven lap image.</div>', unsafe_allow_html=True)
