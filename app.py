@@ -685,7 +685,7 @@ def main():
         # Mobile-friendly input layout
         col_year, col_gp = st.columns([1, 2])
         with col_year:
-            year = st.number_input("Year", min_value=2018, max_value=2025, value=2024, step=1)
+            year = st.number_input("Year", min_value=2018, max_value=2025, value=2025, step=1)
         with col_gp:
             gp_options = get_available_gps(year)
             if not gp_options:
@@ -710,7 +710,7 @@ def main():
             st.header("🏁 Race Selection")
             
             # Year selection
-            year = st.number_input("Year", min_value=2018, max_value=2025, value=2024, step=1)
+            year = st.number_input("Year", min_value=2018, max_value=2025, value=2025, step=1)
             
             # GP selection
             gp_options = get_available_gps(year)
