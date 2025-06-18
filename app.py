@@ -480,14 +480,13 @@ def create_data_driven_lap_image(driver_data_dict, _session, drivers_to_plot, ye
         
         # Create figure (mobile layout for social media)
         fig = plt.figure(figsize=(12, 21), facecolor='#000000')
-        gs = fig.add_gridspec(6, 1, height_ratios=[0.4, 5.6, 1.0, 0.8, 1.0, 0.8], hspace=0.15)
+        gs = fig.add_gridspec(5, 1, height_ratios=[0.4, 6.8, 1.2, 0.8, 0.8], hspace=0.15)
         
         ax_title = fig.add_subplot(gs[0, 0])
         ax_track = fig.add_subplot(gs[1, 0])
         ax_gear_speed = fig.add_subplot(gs[2, 0])
         ax_tyre_info = fig.add_subplot(gs[3, 0])
-        ax_sectors = fig.add_subplot(gs[4, 0])
-        ax_timer = fig.add_subplot(gs[5, 0])
+        ax_timer = fig.add_subplot(gs[4, 0])
         
         # Style setup
         clean_green = '#00FF00'
@@ -496,7 +495,7 @@ def create_data_driven_lap_image(driver_data_dict, _session, drivers_to_plot, ye
         border_color = '#333333'
         
         panel_style = {'facecolor': clean_gray, 'edgecolor': border_color, 'linewidth': 0.5, 'alpha': 0.9}
-        for ax in [ax_gear_speed, ax_tyre_info, ax_sectors, ax_timer]:
+        for ax in [ax_gear_speed, ax_tyre_info, ax_timer]:
             ax.set_facecolor(panel_style['facecolor'])
             for spine in ax.spines.values():
                 spine.set_color(panel_style['edgecolor'])
@@ -642,18 +641,7 @@ def create_data_driven_lap_image(driver_data_dict, _session, drivers_to_plot, ye
         ax_tyre_info.text(0.75, 0.2, p2_life_text, fontsize=12, color=clean_white, ha='center')
         ax_tyre_info.axis('off')
         
-        # Lap times comparison with proper formatting
-        lap_time_1 = driver_data_dict[p1_code]['lap_time']
-        lap_time_2 = driver_data_dict[p2_code]['lap_time']
-        delta = abs(lap_time_1 - lap_time_2)
-        
-        ax_sectors.text(0.1, 0.7, f'{p1_code}:', fontsize=16, color=p1_color, fontweight='bold')
-        ax_sectors.text(0.35, 0.7, format_lap_time(lap_time_1), fontsize=16, color=clean_white, family='monospace')
-        ax_sectors.text(0.1, 0.3, f'{p2_code}:', fontsize=16, color=p2_color, fontweight='bold')
-        ax_sectors.text(0.35, 0.3, format_lap_time(lap_time_2), fontsize=16, color=clean_white, family='monospace')
-        
-        gap_color = clean_green if delta < 0.1 else ('#FFA500' if delta < 0.5 else '#FF0000')
-        ax_sectors.text(0.7, 0.5, f'⏱️ GAP: {delta:.3f}s', fontsize=16, color=gap_color, fontweight='bold')
+        # Remove the lap times comparison section - info is already in the image
         ax_sectors.axis('off')
         
         # Final info
