@@ -179,11 +179,27 @@ def setup_environment():
 
 def adjust_color_luminance(color_hex, factor):
     """Adjust the luminance of a color by a factor"""
+    # Input validation
+    if not color_hex or not isinstance(color_hex, str):
+        return '#FF0000'  # Emergency fallback
+    
+    if not isinstance(factor, (int, float)) or factor <= 0:
+        return color_hex  # Return original if factor is invalid
+    
     try:
-        color_hex = color_hex.lstrip('#')
+        # Clean the hex color string
+        color_hex = str(color_hex).strip().lstrip('#')
+        if len(color_hex) != 6:
+            return '#FF0000'  # Invalid hex format
+            
+        # Convert hex to RGB
         r = int(color_hex[0:2], 16) / 255.0
         g = int(color_hex[2:4], 16) / 255.0
         b = int(color_hex[4:6], 16) / 255.0
+        
+        # Validate RGB values
+        if not all(0 <= val <= 1 for val in [r, g, b]):
+            return color_hex
         
         max_val = max(r, g, b)
         min_val = min(r, g, b)
@@ -223,24 +239,47 @@ def adjust_color_luminance(color_hex, factor):
             new_g = hsl_to_rgb_component(p, q, hue)
             new_b = hsl_to_rgb_component(p, q, hue - 1/3)
         
+        # Ensure values are in valid range
+        new_r = max(0, min(1, new_r))
+        new_g = max(0, min(1, new_g))
+        new_b = max(0, min(1, new_b))
+        
         new_r = int(new_r * 255)
         new_g = int(new_g * 255)
         new_b = int(new_b * 255)
         
         return f"#{new_r:02x}{new_g:02x}{new_b:02x}"
         
+    except (ValueError, TypeError, RecursionError) as e:
+        # Handle specific recursion errors
+        if isinstance(e, RecursionError):
+            return '#FF0000'  # Emergency red for recursion
+        return color_hex  # Return original for other errors
     except Exception:
-        return color_hex
+        return color_hex  # General fallback
 
-def get_team_color(driver_code, session, drivers_to_plot, is_secondary=False):
+def get_team_color(driver_code, session, drivers_to_plot, is_secondary=False, _recursion_depth=0):
     """Get the team color for a driver"""
+    # Recursion protection
+    if _recursion_depth > 5:
+        # Emergency fallback to prevent infinite recursion
+        driver_index = 0
+        try:
+            driver_index = drivers_to_plot.index(driver_code) if driver_code in drivers_to_plot else 0
+        except:
+            pass
+        fallback_color = DEFAULT_COLORS[driver_index % len(DEFAULT_COLORS)]
+        return fallback_color
+    
     team_name = None
     base_color = None
+    driver_info = None  # Initialize to None
     
+    # First attempt: Get team color from mapping
     try:
         driver_info = session.get_driver(driver_code)
         if driver_info is not None and not driver_info.empty:
-            team_name = driver_info['TeamName']
+            team_name = driver_info.get('TeamName', '')
             
             if team_name in TEAM_COLORS_MAPPING:
                 base_color = TEAM_COLORS_MAPPING[team_name]
@@ -249,15 +288,23 @@ def get_team_color(driver_code, session, drivers_to_plot, is_secondary=False):
                     return adjust_color_luminance(base_color, 1.4)
                 else:
                     return adjust_color_luminance(base_color, 0.85)
-    except Exception:
-        pass
+    except Exception as e:
+        # Log the error but continue to fallback methods
+        driver_info = None
 
+    # Second attempt: Get FastF1 driver color
     try:
         color = fastf1.plotting.get_driver_color(driver_code, session=session)
+        if not color:
+            raise ValueError("No color returned")
+            
         generic_colors = ['#000000', '#ffffff', '#808080', '#B6BABD']
         
+        # Only use driver_info if it was successfully retrieved
         if driver_info is not None and not driver_info.empty:
-            if color.upper() in generic_colors and driver_info['TeamName'] != 'Haas F1 Team':
+            team_name_check = driver_info.get('TeamName', '')
+            if color.upper() in [c.upper() for c in generic_colors] and team_name_check != 'Haas F1 Team':
+                # Skip generic colors unless it's Haas (which actually uses grey/silver)
                 pass
             else:
                 if is_secondary and base_color is None:
@@ -265,21 +312,28 @@ def get_team_color(driver_code, session, drivers_to_plot, is_secondary=False):
                 else:
                     return color
         else:
-            if color.upper() not in generic_colors:
+            # No driver info available, use color if it's not generic
+            if color.upper() not in [c.upper() for c in generic_colors]:
                 if is_secondary:
                     return adjust_color_luminance(color, 1.3)
                 else:
                     return color
-    except Exception:
+    except Exception as e:
+        # FastF1 color failed, continue to final fallback
         pass
     
-    driver_index = drivers_to_plot.index(driver_code) if driver_code in drivers_to_plot else 0
-    fallback_color = DEFAULT_COLORS[driver_index % len(DEFAULT_COLORS)]
-    
-    if is_secondary:
-        return adjust_color_luminance(fallback_color, 1.4)
-    else:
-        return adjust_color_luminance(fallback_color, 0.9)
+    # Final fallback: Use default colors
+    try:
+        driver_index = drivers_to_plot.index(driver_code) if driver_code in drivers_to_plot else 0
+        fallback_color = DEFAULT_COLORS[driver_index % len(DEFAULT_COLORS)]
+        
+        if is_secondary:
+            return adjust_color_luminance(fallback_color, 1.4)
+        else:
+            return adjust_color_luminance(fallback_color, 0.9)
+    except Exception as e:
+        # Ultimate emergency fallback
+        return '#FF0000' if not is_secondary else '#800000'
 
 @st.cache_data(show_spinner=False)
 def get_available_gps(year):
@@ -442,216 +496,211 @@ def prepare_driver_data(_session, drivers_to_plot, driver_selection_mode):
     except Exception as e:
         raise Exception(f"Failed to prepare driver data: {str(e)}")
 
-def create_data_driven_lap_image(driver_data_dict, _session, drivers_to_plot, year, gp_name, session_display):
-    """Create a single PNG image showing data-driven lap visualization"""
+def create_data_driven_lap_plot(driver_data_dict, _session, drivers_to_plot, year, gp_name, session_display):
+    """Create and return a matplotlib figure showing data-driven lap visualization"""
+    # Get driver data
+    p1_code, p2_code = drivers_to_plot[0], drivers_to_plot[1]
+    
+    # Get driver colors with simple fallbacks
     try:
-        # Get driver data
-        p1_code, p2_code = drivers_to_plot[0], drivers_to_plot[1]
-        
-        # Get driver colors
-        p1_color = get_team_color(p1_code, _session, drivers_to_plot, is_secondary=False)
-        p2_color = get_team_color(p2_code, _session, drivers_to_plot, is_secondary=True)
-        
-        # Create figure (mobile layout for social media)
-        fig = plt.figure(figsize=(12, 21), facecolor='#000000')
-        gs = fig.add_gridspec(6, 1, height_ratios=[0.4, 5.6, 1.0, 0.8, 1.0, 0.8], hspace=0.15)
-        
-        ax_title = fig.add_subplot(gs[0, 0])
-        ax_track = fig.add_subplot(gs[1, 0])
-        ax_gear_speed = fig.add_subplot(gs[2, 0])
-        ax_tyre_info = fig.add_subplot(gs[3, 0])
-        ax_sectors = fig.add_subplot(gs[4, 0])
-        ax_timer = fig.add_subplot(gs[5, 0])
-        
-        # Style setup
-        clean_green = '#00FF00'
-        clean_white = '#FFFFFF'
-        clean_gray = '#1a1a1a'
-        border_color = '#333333'
-        
-        panel_style = {'facecolor': clean_gray, 'edgecolor': border_color, 'linewidth': 0.5, 'alpha': 0.9}
-        for ax in [ax_gear_speed, ax_tyre_info, ax_sectors, ax_timer]:
-            ax.set_facecolor(panel_style['facecolor'])
-            for spine in ax.spines.values():
-                spine.set_color(panel_style['edgecolor'])
-                spine.set_linewidth(panel_style['linewidth'])
-        ax_track.set_facecolor('#0A0A0A')
-        
-        # Get telemetry data
-        p1_tel = driver_data_dict[p1_code]['telemetry']
-        p2_tel = driver_data_dict[p2_code]['telemetry']
-        
-        # ORIGINAL TRACK COLORING LOGIC: Compare speeds at each point
-        # Use P1 telemetry as reference for track layout
-        track_segments_x = p1_tel['X'].to_numpy()
-        track_segments_y = p1_tel['Y'].to_numpy()
-        
-        # Create track segments
-        points = np.array([track_segments_x, track_segments_y]).T.reshape(-1, 1, 2)
-        segments = np.concatenate([points[:-1], points[1:]], axis=1)
-        
-        # Get P1 speeds
-        p1_speeds = p1_tel['Speed'].to_numpy()
-        
-        # Align P2 speeds to P1 distance for proper comparison
-        p1_dist = p1_tel['Distance'].to_numpy()
-        p2_dist = p2_tel['Distance'].to_numpy()
-        p2_speed_interp = interp1d(p2_dist, p2_tel['Speed'].to_numpy(), 
-                                  kind='linear', bounds_error=False, fill_value='extrapolate')
-        p2_speeds_aligned = p2_speed_interp(p1_dist)
-        
-        # Create segment colors based on who is faster at each point
-        p1_color_rgba = mcolors.to_rgba(p1_color)
-        p2_color_rgba = mcolors.to_rgba(p2_color)
-        
-        segment_colors = []
-        for i in range(len(segments)):
-            if i < len(p1_speeds) and i < len(p2_speeds_aligned):
-                if p1_speeds[i] >= p2_speeds_aligned[i]:
-                    segment_colors.append(p1_color_rgba)
-                else:
-                    segment_colors.append(p2_color_rgba)
+        p1_color = get_team_color(p1_code, _session, drivers_to_plot, is_secondary=False, _recursion_depth=0)
+    except:
+        p1_color = '#FF0000'  # Red fallback
+    
+    try:
+        p2_color = get_team_color(p2_code, _session, drivers_to_plot, is_secondary=True, _recursion_depth=0)
+    except:
+        p2_color = '#0000FF'  # Blue fallback
+    
+    # Create figure (mobile layout for social media)
+    fig = plt.figure(figsize=(12, 21), facecolor='#000000')
+    gs = fig.add_gridspec(6, 1, height_ratios=[0.4, 5.6, 1.0, 0.8, 1.0, 0.8], hspace=0.15)
+    
+    ax_title = fig.add_subplot(gs[0, 0])
+    ax_track = fig.add_subplot(gs[1, 0])
+    ax_gear_speed = fig.add_subplot(gs[2, 0])
+    ax_tyre_info = fig.add_subplot(gs[3, 0])
+    ax_sectors = fig.add_subplot(gs[4, 0])
+    ax_timer = fig.add_subplot(gs[5, 0])
+    
+    # Style setup
+    clean_green = '#00FF00'
+    clean_white = '#FFFFFF'
+    clean_gray = '#1a1a1a'
+    border_color = '#333333'
+    
+    panel_style = {'facecolor': clean_gray, 'edgecolor': border_color, 'linewidth': 0.5, 'alpha': 0.9}
+    for ax in [ax_gear_speed, ax_tyre_info, ax_sectors, ax_timer]:
+        ax.set_facecolor(panel_style['facecolor'])
+        for spine in ax.spines.values():
+            spine.set_color(panel_style['edgecolor'])
+            spine.set_linewidth(panel_style['linewidth'])
+    ax_track.set_facecolor('#0A0A0A')
+    
+    # Get telemetry data
+    p1_tel = driver_data_dict[p1_code]['telemetry']
+    p2_tel = driver_data_dict[p2_code]['telemetry']
+    
+    # ORIGINAL TRACK COLORING LOGIC: Compare speeds at each point
+    # Use P1 telemetry as reference for track layout
+    track_segments_x = p1_tel['X'].to_numpy()
+    track_segments_y = p1_tel['Y'].to_numpy()
+    
+    # Create track segments
+    points = np.array([track_segments_x, track_segments_y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    
+    # Get P1 speeds
+    p1_speeds = p1_tel['Speed'].to_numpy()
+    
+    # Align P2 speeds to P1 distance for proper comparison
+    p1_dist = p1_tel['Distance'].to_numpy()
+    p2_dist = p2_tel['Distance'].to_numpy()
+    p2_speed_interp = interp1d(p2_dist, p2_tel['Speed'].to_numpy(), 
+                              kind='linear', bounds_error=False, fill_value='extrapolate')
+    p2_speeds_aligned = p2_speed_interp(p1_dist)
+    
+    # Create segment colors based on who is faster at each point
+    p1_color_rgba = mcolors.to_rgba(p1_color)
+    p2_color_rgba = mcolors.to_rgba(p2_color)
+    
+    segment_colors = []
+    for i in range(len(segments)):
+        if i < len(p1_speeds) and i < len(p2_speeds_aligned):
+            if p1_speeds[i] >= p2_speeds_aligned[i]:
+                segment_colors.append(p1_color_rgba)
             else:
-                # Default to neutral color for edge cases
-                segment_colors.append(mcolors.to_rgba('#404040'))
-        
-        # Create and add track with speed-based coloring
-        lc = LineCollection(segments, colors=segment_colors, linewidths=10, alpha=0.9, capstyle='round')
-        ax_track.add_collection(lc)
-        
-        # Add car positions at mid-lap points
-        mid_point_p1 = len(p1_tel) // 2
-        mid_point_p2 = len(p2_tel) // 2
-        
-        # Car dots (without borders) - positioned at mid-lap
-        car_radius = np.mean([track_segments_x.max() - track_segments_x.min(), 
-                             track_segments_y.max() - track_segments_y.min()]) * 0.008
-        
-        car1_circle = Circle((track_segments_x[mid_point_p1], track_segments_y[mid_point_p1]), 
-                           radius=car_radius, facecolor=p1_color, edgecolor='none', zorder=10)
-        car2_circle = Circle((track_segments_x[mid_point_p2], track_segments_y[mid_point_p2]), 
-                           radius=car_radius, facecolor=p2_color, edgecolor='none', zorder=10)
-        ax_track.add_patch(car1_circle)
-        ax_track.add_patch(car2_circle)
-        
-        ax_track.set_xlim(track_segments_x.min() - 200, track_segments_x.max() + 200)
-        ax_track.set_ylim(track_segments_y.min() - 200, track_segments_y.max() + 200)
-        ax_track.set_aspect('equal')
-        ax_track.axis('off')
-        
-        # Add legend for track coloring - positioned above the track
-        legend_elements = [
-            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=p1_color, 
-                      markeredgecolor='none', markersize=12, label=f"{p1_code}"),
-            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=p2_color, 
-                      markeredgecolor='none', markersize=12, label=f"{p2_code}")
-        ]
-        ax_track.legend(handles=legend_elements, loc='upper center', ncol=2, 
-                       facecolor=clean_gray, edgecolor=border_color, labelcolor=clean_white, 
-                       fontsize=14, bbox_to_anchor=(0.5, 1.08))
-        
-        # Title
-        ax_title.text(0.5, 0.5, f'{year} {gp_name} {session_display}', 
-                     ha='center', va='center', fontsize=24, color=clean_white, fontweight='bold')
-        ax_title.axis('off')
-        
-        # Speed comparison only (removed brake/throttle)
-        ax_gear_speed.plot(p1_tel['Speed'], color=p1_color, linewidth=3, label=f'{p1_code} Speed', alpha=0.8)
-        
-        # Align P2 speed to P1 length for comparison
-        p2_speed_aligned_plot = np.interp(np.linspace(0, len(p2_tel)-1, len(p1_tel)), 
-                                         range(len(p2_tel)), p2_tel['Speed'])
-        ax_gear_speed.plot(p2_speed_aligned_plot, color=p2_color, linewidth=3, label=f'{p2_code} Speed', alpha=0.8)
-        
-        ax_gear_speed.set_ylabel('Speed (km/h)', color=clean_white, fontsize=14, fontweight='bold')
-        ax_gear_speed.tick_params(colors=clean_white, labelsize=12)
-        ax_gear_speed.legend(loc='upper right', facecolor=clean_gray, edgecolor=border_color, labelcolor=clean_white)
-        ax_gear_speed.grid(True, alpha=0.15, color=clean_white, linestyle='-', linewidth=0.5)
-        
-        # Tire information with life
-        p1_compound = driver_data_dict[p1_code]['compound'] if driver_data_dict[p1_code]['compound'] else 'UNKNOWN'
-        p2_compound = driver_data_dict[p2_code]['compound'] if driver_data_dict[p2_code]['compound'] else 'UNKNOWN'
-        
-        # Get tire life from lap data
-        p1_tyre_life = driver_data_dict[p1_code]['lap'].get('TyreLife', 'N/A')
-        p2_tyre_life = driver_data_dict[p2_code]['lap'].get('TyreLife', 'N/A')
-        
-        # Handle NaN values
-        if pd.isna(p1_tyre_life):
-            p1_tyre_life = 'N/A'
+                segment_colors.append(p2_color_rgba)
         else:
-            p1_tyre_life = int(p1_tyre_life)
-            
-        if pd.isna(p2_tyre_life):
-            p2_tyre_life = 'N/A'
-        else:
-            p2_tyre_life = int(p2_tyre_life)
+            # Default to neutral color for edge cases
+            segment_colors.append(mcolors.to_rgba('#404040'))
+    
+    # Create and add track with speed-based coloring
+    lc = LineCollection(segments, colors=segment_colors, linewidths=10, alpha=0.9, capstyle='round')
+    ax_track.add_collection(lc)
+    
+    # Add car positions at mid-lap points
+    mid_point_p1 = len(p1_tel) // 2
+    mid_point_p2 = len(p2_tel) // 2
+    
+    # Car dots (without borders) - positioned at mid-lap
+    car_radius = np.mean([track_segments_x.max() - track_segments_x.min(), 
+                         track_segments_y.max() - track_segments_y.min()]) * 0.008
+    
+    car1_circle = Circle((track_segments_x[mid_point_p1], track_segments_y[mid_point_p1]), 
+                       radius=car_radius, facecolor=p1_color, edgecolor='none', zorder=10)
+    car2_circle = Circle((track_segments_x[mid_point_p2], track_segments_y[mid_point_p2]), 
+                       radius=car_radius, facecolor=p2_color, edgecolor='none', zorder=10)
+    ax_track.add_patch(car1_circle)
+    ax_track.add_patch(car2_circle)
+    
+    ax_track.set_xlim(track_segments_x.min() - 200, track_segments_x.max() + 200)
+    ax_track.set_ylim(track_segments_y.min() - 200, track_segments_y.max() + 200)
+    ax_track.set_aspect('equal')
+    ax_track.axis('off')
+    
+    # Add legend for track coloring - positioned above the track
+    legend_elements = [
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=p1_color, 
+                  markeredgecolor='none', markersize=12, label=f"{p1_code}"),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=p2_color, 
+                  markeredgecolor='none', markersize=12, label=f"{p2_code}")
+    ]
+    ax_track.legend(handles=legend_elements, loc='upper center', ncol=2, 
+                   facecolor=clean_gray, edgecolor=border_color, labelcolor=clean_white, 
+                   fontsize=14, bbox_to_anchor=(0.5, 1.08))
+    
+    # Title
+    ax_title.text(0.5, 0.5, f'{year} {gp_name} {session_display}', 
+                 ha='center', va='center', fontsize=24, color=clean_white, fontweight='bold')
+    ax_title.axis('off')
+    
+    # Speed comparison only (removed brake/throttle)
+    ax_gear_speed.plot(p1_tel['Speed'], color=p1_color, linewidth=3, label=f'{p1_code} Speed', alpha=0.8)
+    
+    # Align P2 speed to P1 length for comparison
+    p2_speed_aligned_plot = np.interp(np.linspace(0, len(p2_tel)-1, len(p1_tel)), 
+                                     range(len(p2_tel)), p2_tel['Speed'])
+    ax_gear_speed.plot(p2_speed_aligned_plot, color=p2_color, linewidth=3, label=f'{p2_code} Speed', alpha=0.8)
+    
+    ax_gear_speed.set_ylabel('Speed (km/h)', color=clean_white, fontsize=14, fontweight='bold')
+    ax_gear_speed.tick_params(colors=clean_white, labelsize=12)
+    ax_gear_speed.legend(loc='upper right', facecolor=clean_gray, edgecolor=border_color, labelcolor=clean_white)
+    ax_gear_speed.grid(True, alpha=0.15, color=clean_white, linestyle='-', linewidth=0.5)
+    
+    # Tire information with life
+    p1_compound = driver_data_dict[p1_code]['compound'] if driver_data_dict[p1_code]['compound'] else 'UNKNOWN'
+    p2_compound = driver_data_dict[p2_code]['compound'] if driver_data_dict[p2_code]['compound'] else 'UNKNOWN'
+    
+    # Get tire life from lap data
+    p1_tyre_life = driver_data_dict[p1_code]['lap'].get('TyreLife', 'N/A')
+    p2_tyre_life = driver_data_dict[p2_code]['lap'].get('TyreLife', 'N/A')
+    
+    # Handle NaN values
+    if pd.isna(p1_tyre_life):
+        p1_tyre_life = 'N/A'
+    else:
+        p1_tyre_life = int(p1_tyre_life)
         
-        # Tire compound colors
-        compound_colors = {
-            'SOFT': '#FF0000',     # Red
-            'MEDIUM': '#FFFF00',   # Yellow  
-            'HARD': '#FFFFFF',     # White
-            'INTERMEDIATE': '#00FF00', # Green
-            'WET': '#0000FF'       # Blue
-        }
-        
-        p1_compound_color = compound_colors.get(p1_compound, clean_white)
-        p2_compound_color = compound_colors.get(p2_compound, clean_white)
-        
-        # Tire panel
-        ax_tyre_info.text(0.25, 0.8, f"{p1_code}", fontsize=16, color=p1_color, fontweight='bold', ha='center')
-        ax_tyre_info.text(0.75, 0.8, f"{p2_code}", fontsize=16, color=p2_color, fontweight='bold', ha='center')
-        
-        # Compound with colored background
-        ax_tyre_info.text(0.25, 0.5, p1_compound, fontsize=14, fontweight='bold', color='black', ha='center',
-                         bbox=dict(boxstyle="round,pad=0.3", facecolor=p1_compound_color, edgecolor=p1_color, linewidth=1.5))
-        ax_tyre_info.text(0.75, 0.5, p2_compound, fontsize=14, fontweight='bold', color='black', ha='center',
-                         bbox=dict(boxstyle="round,pad=0.3", facecolor=p2_compound_color, edgecolor=p2_color, linewidth=1.5))
-        
-        # Tire life
-        p1_life_text = f"Life: {p1_tyre_life}" if p1_tyre_life != 'N/A' else "Life: N/A"
-        p2_life_text = f"Life: {p2_tyre_life}" if p2_tyre_life != 'N/A' else "Life: N/A"
-        ax_tyre_info.text(0.25, 0.2, p1_life_text, fontsize=12, color=clean_white, ha='center')
-        ax_tyre_info.text(0.75, 0.2, p2_life_text, fontsize=12, color=clean_white, ha='center')
-        ax_tyre_info.axis('off')
-        
-        # Lap times comparison with proper formatting
-        lap_time_1 = driver_data_dict[p1_code]['lap_time']
-        lap_time_2 = driver_data_dict[p2_code]['lap_time']
-        delta = abs(lap_time_1 - lap_time_2)
-        
-        ax_sectors.text(0.1, 0.7, f'{p1_code}:', fontsize=16, color=p1_color, fontweight='bold')
-        ax_sectors.text(0.35, 0.7, format_lap_time(lap_time_1), fontsize=16, color=clean_white, family='monospace')
-        ax_sectors.text(0.1, 0.3, f'{p2_code}:', fontsize=16, color=p2_color, fontweight='bold')
-        ax_sectors.text(0.35, 0.3, format_lap_time(lap_time_2), fontsize=16, color=clean_white, family='monospace')
-        
-        gap_color = clean_green if delta < 0.1 else ('#FFA500' if delta < 0.5 else '#FF0000')
-        ax_sectors.text(0.7, 0.5, f'⏱️ GAP: {delta:.3f}s', fontsize=16, color=gap_color, fontweight='bold')
-        ax_sectors.axis('off')
-        
-        # Final info
-        ax_timer.text(0.5, 0.5, '🏁 FASTEST LAP COMPARISON', 
-                     ha='center', va='center', fontsize=20, color=clean_white, fontweight='bold')
-        ax_timer.axis('off')
-        
-        # Add watermark
-        fig.text(0.95, 0.98, '@datadrivenlaps', fontsize=26, color='#FFFFFF', 
-                alpha=0.7, ha='right', va='top', fontweight='bold', 
-                transform=fig.transFigure, rotation=0)
-        
-        # Save to bytes buffer
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=300, bbox_inches='tight', facecolor='black')
-        buf.seek(0)
-        
-        plt.close(fig)
-        
-        return buf
-        
-    except Exception as e:
-        plt.close('all')
-        raise Exception(f"Failed to create image: {str(e)}")
+    if pd.isna(p2_tyre_life):
+        p2_tyre_life = 'N/A'
+    else:
+        p2_tyre_life = int(p2_tyre_life)
+    
+    # Tire compound colors
+    compound_colors = {
+        'SOFT': '#FF0000',     # Red
+        'MEDIUM': '#FFFF00',   # Yellow  
+        'HARD': '#FFFFFF',     # White
+        'INTERMEDIATE': '#00FF00', # Green
+        'WET': '#0000FF'       # Blue
+    }
+    
+    p1_compound_color = compound_colors.get(p1_compound, clean_white)
+    p2_compound_color = compound_colors.get(p2_compound, clean_white)
+    
+    # Tire panel
+    ax_tyre_info.text(0.25, 0.8, f"{p1_code}", fontsize=16, color=p1_color, fontweight='bold', ha='center')
+    ax_tyre_info.text(0.75, 0.8, f"{p2_code}", fontsize=16, color=p2_color, fontweight='bold', ha='center')
+    
+    # Compound with colored background
+    ax_tyre_info.text(0.25, 0.5, p1_compound, fontsize=14, fontweight='bold', color='black', ha='center',
+                     bbox=dict(boxstyle="round,pad=0.3", facecolor=p1_compound_color, edgecolor=p1_color, linewidth=1.5))
+    ax_tyre_info.text(0.75, 0.5, p2_compound, fontsize=14, fontweight='bold', color='black', ha='center',
+                     bbox=dict(boxstyle="round,pad=0.3", facecolor=p2_compound_color, edgecolor=p2_color, linewidth=1.5))
+    
+    # Tire life
+    p1_life_text = f"Life: {p1_tyre_life}" if p1_tyre_life != 'N/A' else "Life: N/A"
+    p2_life_text = f"Life: {p2_tyre_life}" if p2_tyre_life != 'N/A' else "Life: N/A"
+    ax_tyre_info.text(0.25, 0.2, p1_life_text, fontsize=12, color=clean_white, ha='center')
+    ax_tyre_info.text(0.75, 0.2, p2_life_text, fontsize=12, color=clean_white, ha='center')
+    ax_tyre_info.axis('off')
+    
+    # Lap times comparison with proper formatting
+    lap_time_1 = driver_data_dict[p1_code]['lap_time']
+    lap_time_2 = driver_data_dict[p2_code]['lap_time']
+    delta = abs(lap_time_1 - lap_time_2)
+    
+    ax_sectors.text(0.1, 0.7, f'{p1_code}:', fontsize=16, color=p1_color, fontweight='bold')
+    ax_sectors.text(0.35, 0.7, format_lap_time(lap_time_1), fontsize=16, color=clean_white, family='monospace')
+    ax_sectors.text(0.1, 0.3, f'{p2_code}:', fontsize=16, color=p2_color, fontweight='bold')
+    ax_sectors.text(0.35, 0.3, format_lap_time(lap_time_2), fontsize=16, color=clean_white, family='monospace')
+    
+    gap_color = clean_green if delta < 0.1 else ('#FFA500' if delta < 0.5 else '#FF0000')
+    ax_sectors.text(0.7, 0.5, f'⏱️ GAP: {delta:.3f}s', fontsize=16, color=gap_color, fontweight='bold')
+    ax_sectors.axis('off')
+    
+    # Final info
+    ax_timer.text(0.5, 0.5, '🏁 FASTEST LAP COMPARISON', 
+                 ha='center', va='center', fontsize=20, color=clean_white, fontweight='bold')
+    ax_timer.axis('off')
+    
+    # Add watermark
+    fig.text(0.95, 0.98, '@datadrivenlaps', fontsize=26, color='#FFFFFF', 
+            alpha=0.7, ha='right', va='top', fontweight='bold', 
+            transform=fig.transFigure, rotation=0)
+    
+    return fig
 
 # Main App Layout
 def main():
@@ -659,7 +708,7 @@ def main():
     
     # Header
     st.markdown('<h1 class="main-header">🏎️ F1 Data Driven Laps</h1>', unsafe_allow_html=True)
-    st.markdown("### Create stunning F1 data-driven lap images from telemetry data")
+    st.markdown("### Create stunning F1 data-driven lap visualizations from telemetry data")
     
     # Responsive layout - use full width on mobile, sidebar on desktop
     if st.session_state.get('mobile_view', False):
@@ -848,10 +897,9 @@ def main():
     if len(drivers_to_plot) == 2:
         st.markdown(f'<div class="status-box success-box">✅ Ready to analyze: <strong>{drivers_to_plot[0]} vs {drivers_to_plot[1]}</strong></div>', unsafe_allow_html=True)
         
-        # Responsive column layout
         if st.session_state.get('mobile_view', False):
             # Mobile: single column layout
-            if st.button("🖼️ Generate Data Driven Lap Image", type="primary", use_container_width=True):
+            if st.button("🏎️ Generate Data Driven Lap Visualization", type="primary", use_container_width=True):
                 try:
                     # Prepare data
                     with st.spinner("🏎️ Preparing driver data..."):
@@ -881,36 +929,30 @@ def main():
                     # Generate image
                     st.subheader("🎨 Image Generation")
                     
-                    with st.spinner("🏎️ Creating data-driven lap image..."):
-                        image_buffer = create_data_driven_lap_image(
+                    # Generate and display plot
+                    st.subheader("🏁 Your Data Driven Lap Visualization")
+                    
+                    with st.spinner("🏎️ Creating data-driven lap visualization..."):
+                        fig = create_data_driven_lap_plot(
                             driver_data, session, drivers_to_plot, year, gp_name, session_display
                         )
                     
-                    # Display image
-                    st.subheader("🏁 Your Data Driven Lap Image")
-                    st.image(image_buffer, use_column_width=True)
-                    
-                    # Download button
-                    st.download_button(
-                        label="📥 Download Image",
-                        data=image_buffer.getvalue(),
-                        file_name=f"Data_Driven_Lap_{year}_{gp_name}_{session_display}_{drivers_to_plot[0]}_vs_{drivers_to_plot[1]}.png",
-                        mime="image/png",
-                        use_container_width=True
-                    )
+                    # Display plot directly
+                    st.pyplot(fig, use_container_width=True)
+                    plt.close(fig)  # Clean up
                         
                 except Exception as e:
-                    st.error(f"❌ Error generating image: {str(e)}")
+                    st.error(f"❌ Error generating visualization: {str(e)}")
             
             # Mobile tips
-            st.info("💡 **Mobile Tips:**\n🏎️ Image generation takes just a few seconds\n🏎️ Optimized for mobile sharing\n🏎️ High resolution PNG output\n🏎️ Perfect for social media")
+            st.info("💡 **Mobile Tips:**\n🏎️ Visualization generates in just a few seconds\n🏎️ Optimized for mobile viewing\n🏎️ Interactive matplotlib display\n🏎️ Perfect for analysis")
             
         else:
             # Desktop: two-column layout
             col1, col2 = st.columns([2, 1])
             
             with col1:
-                if st.button("🖼️ Generate Data Driven Lap Image", type="primary", use_container_width=True):
+                if st.button("🏎️ Generate Data Driven Lap Visualization", type="primary", use_container_width=True):
                     try:
                         # Prepare data
                         with st.spinner("🏎️ Preparing driver data..."):
@@ -939,32 +981,23 @@ def main():
                         
                         st.info(f"⏱️ Gap: {delta:.3f} seconds")
                         
-                        # Generate image
-                        st.subheader("🎨 Image Generation")
+                        # Generate and display plot
+                        st.subheader("🏁 Your Data Driven Lap Visualization")
                         
-                        with st.spinner("🏎️ Creating data-driven lap image..."):
-                            image_buffer = create_data_driven_lap_image(
+                        with st.spinner("🏎️ Creating data-driven lap visualization..."):
+                            fig = create_data_driven_lap_plot(
                                 driver_data, session, drivers_to_plot, year, gp_name, session_display
                             )
                         
-                        # Display image
-                        st.subheader("🏁 Your Data Driven Lap Image")
-                        st.image(image_buffer, use_column_width=True)
-                        
-                        # Download button
-                        st.download_button(
-                            label="📥 Download Image",
-                            data=image_buffer.getvalue(),
-                            file_name=f"Data_Driven_Lap_{year}_{gp_name}_{session_display}_{drivers_to_plot[0]}_vs_{drivers_to_plot[1]}.png",
-                            mime="image/png",
-                            use_container_width=True
-                        )
+                        # Display plot directly
+                        st.pyplot(fig, use_container_width=True)
+                        plt.close(fig)  # Clean up
                             
                     except Exception as e:
-                        st.error(f"❌ Error generating image: {str(e)}")
+                        st.error(f"❌ Error generating visualization: {str(e)}")
             
             with col2:
-                st.info("💡 **Tips:**\n🏎️ Image generation takes just a few seconds\n🏎️ Mobile-optimized format (9:16)\n🏎️ Perfect for social media sharing\n🏎️ High resolution PNG output")
+                st.info("💡 **Tips:**\n🏎️ Visualization generates in just a few seconds\n🏎️ Interactive matplotlib display\n🏎️ Perfect for detailed analysis\n🏎️ Mobile responsive design")
     
     else:
         st.markdown('<div class="status-box info-box">ℹ️ Please select exactly 2 drivers to generate a data driven lap image.</div>', unsafe_allow_html=True)
