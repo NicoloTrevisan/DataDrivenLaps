@@ -24,6 +24,7 @@ import requests
 from pathlib import Path
 import io
 import base64
+import warnings
 
 # Page configuration
 st.set_page_config(
@@ -33,6 +34,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Quieter UI: hide error details and toolbar
+st.set_option("client.showErrorDetails", False)
+st.set_option("client.toolbarMode", "minimal")
+
+# Suppress glyph and plotting warnings in UI
+warnings.filterwarnings("ignore", message=r"Glyph .* missing from current font")
+warnings.filterwarnings("ignore", category=UserWarning, module="streamlit")
+warnings.filterwarnings("ignore", category=FutureWarning, module="fastf1.plotting")
+
 # Custom CSS for better styling
 st.markdown("""
 <style>
@@ -41,7 +51,20 @@ st.markdown("""
         font-weight: bold;
         text-align: center;
         color: #FF0000;
-        margin-bottom: 2rem;
+        margin-bottom: 0.25rem;
+    }
+    .tagline {
+        text-align: center;
+        color: #e0e0e0;
+        margin-bottom: 1.25rem;
+        font-size: 1.05rem;
+    }
+    /* Center content and limit width */
+    .main .block-container {
+        max-width: 1100px;
+        margin-left: auto;
+        margin-right: auto;
+        padding-top: 0.75rem;
     }
     .status-box {
         padding: 1rem;
@@ -66,33 +89,16 @@ st.markdown("""
     
     /* Mobile responsiveness */
     @media (max-width: 768px) {
-        .main-header {
-            font-size: 2rem;
-        }
-        .stSelectbox > div > div {
-            font-size: 14px;
-        }
-        .stButton > button {
-            font-size: 16px;
-            padding: 0.75rem 1rem;
-        }
-        .stMetric {
-            background-color: #f8f9fa;
-            padding: 1rem;
-            border-radius: 8px;
-            margin: 0.5rem 0;
-        }
+        .main-header { font-size: 2rem; }
+        .stSelectbox > div > div { font-size: 14px; }
+        .stButton > button { font-size: 16px; padding: 0.75rem 1rem; }
+        .stMetric { background-color: #f8f9fa; padding: 1rem; border-radius: 8px; margin: 0.5rem 0; }
     }
     
     /* Desktop optimizations */
     @media (min-width: 769px) {
-        .stSidebar {
-            width: 350px;
-        }
-        .main .block-container {
-            padding-left: 2rem;
-            padding-right: 2rem;
-        }
+        .stSidebar { width: 350px; }
+        .main .block-container { padding-left: 2rem; padding-right: 2rem; }
     }
     
     /* Improved button styling */
@@ -104,7 +110,6 @@ st.markdown("""
         font-weight: bold;
         transition: all 0.3s ease;
     }
-    
     .stButton > button:hover {
         background: linear-gradient(90deg, #DC0000, #B71C1C);
         transform: translateY(-2px);
@@ -112,22 +117,13 @@ st.markdown("""
     }
     
     /* Improved metrics styling */
-    .stMetric {
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        border-radius: 8px;
-        padding: 1rem;
-    }
+    .stMetric { background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 1rem; }
     
     /* Better info boxes */
-    .stInfo {
-        border-left: 4px solid #17a2b8;
-    }
+    .stInfo { border-left: 4px solid #17a2b8; }
     
     /* Loading spinner improvements */
-    .stSpinner > div {
-        color: #FF0000 !important;
-    }
+    .stSpinner > div { color: #FF0000 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -154,6 +150,152 @@ TEAM_COLORS_MAPPING = {
 }
 
 DEFAULT_COLORS = ['#FF0000', '#0000FF', '#00FF00', '#FFA500', '#800080', '#FFFF00']
+
+# === New helpers ===
+
+def convert_speed_units(speed_kmh_series, units):
+    """Convert speed series from km/h to requested units ('km/h' or 'mph')."""
+    if units == 'mph':
+        return speed_kmh_series * 0.621371
+    return speed_kmh_series
+
+
+def _first_valid_event_with_sessions(year: int) -> tuple:
+    """Return (gp_name, session_display) for the first GP in a year with available sessions.
+    Skips testing/pre-season events and returns ('', '') if none found.
+    """
+    try:
+        gps = get_available_gps(year)
+        if not gps:
+            return ('', '')
+        for gp in gps:
+            label = (gp or '').lower()
+            if 'test' in label or 'pre-season' in label or 'testing' in label:
+                continue
+            sessions = get_available_sessions(year, gp)
+            if not sessions:
+                continue
+            # Prefer Qualifying, else Race, else first available
+            displays = [s[1] for s in sessions]
+            if 'Qualifying' in displays:
+                return (gp, 'Qualifying')
+            if 'Race' in displays:
+                return (gp, 'Race')
+            return (gp, displays[0])
+        return ('', '')
+    except Exception:
+        return ('', '')
+
+
+def _random_valid_selection(years: list) -> tuple:
+    """Try to find a random (year, gp_name, session_display) with available sessions.
+    Attempts up to 15 random picks across provided years. Returns ('', '', '') if none.
+    """
+    import random
+    tries = 15
+    for _ in range(tries):
+        try:
+            year = random.choice(years)
+            gps = get_available_gps(year)
+            if not gps:
+                continue
+            # Filter out testing-like events
+            gps = [g for g in gps if g and ('test' not in g.lower()) and ('pre-season' not in g.lower()) and ('testing' not in g.lower())]
+            if not gps:
+                continue
+            gp = random.choice(gps)
+            sessions = get_available_sessions(year, gp)
+            if not sessions:
+                continue
+            displays = [s[1] for s in sessions]
+            sess_disp = 'Qualifying' if 'Qualifying' in displays else ('Race' if 'Race' in displays else random.choice(displays))
+            return (year, gp, sess_disp)
+        except Exception:
+            continue
+    return ('', '', '')
+
+
+def compute_time_delta_by_distance(p1_tel: pd.DataFrame, p2_tel: pd.DataFrame) -> tuple:
+    """Compute cumulative time delta (s) along distance where negative => P1 ahead.
+    Returns (distance_m, delta_time_s).
+    """
+    # Align on P1 distance grid
+    p1_dist = p1_tel['Distance'].to_numpy()
+    p2_dist = p2_tel['Distance'].to_numpy()
+    p2_speed_interp = interp1d(p2_dist, p2_tel['Speed'].to_numpy(), kind='linear', bounds_error=False, fill_value='extrapolate')
+    p1_speed_kmh = p1_tel['Speed'].to_numpy()
+    p2_speed_kmh_aligned = p2_speed_interp(p1_dist)
+
+    # Convert to m/s
+    v1 = np.maximum(p1_speed_kmh, 1e-3) / 3.6
+    v2 = np.maximum(p2_speed_kmh_aligned, 1e-3) / 3.6
+
+    ds = np.diff(p1_dist, prepend=p1_dist[0])
+    dt1 = ds / np.maximum(v1, 1e-6)
+    dt2 = ds / np.maximum(v2, 1e-6)
+    delta_time = np.cumsum(dt2 - dt1)
+    return p1_dist, delta_time
+
+
+def create_time_delta_plot(distance_m: np.ndarray, delta_time_s: np.ndarray, p1_code: str, p2_code: str) -> plt.Figure:
+    """Create a compact time delta vs distance plot."""
+    fig, ax = plt.subplots(figsize=(10, 2.8), facecolor='#000000')
+    ax.set_facecolor('#111111')
+    ax.plot(distance_m, delta_time_s, color='#FFFFFF', linewidth=1.8)
+    ax.axhline(0, color='#666666', linewidth=1, linestyle='--', alpha=0.7)
+    ax.set_xlabel('Distance (m)', color='#FFFFFF')
+    ax.set_ylabel('Δ time (s)', color='#FFFFFF')
+    ax.tick_params(colors='#FFFFFF')
+    ax.grid(True, color='#FFFFFF', alpha=0.12)
+    ax.set_title(f'Time Delta: {p1_code} vs {p2_code}', color='#FFFFFF')
+    return fig
+
+
+def generate_story_highlights(p1_code: str, p2_code: str, p1_tel: pd.DataFrame, p2_tel: pd.DataFrame) -> list:
+    """Generate 2-3 simple story highlights from telemetry comparisons."""
+    dist, delta_t = compute_time_delta_by_distance(p1_tel, p2_tel)
+
+    # Smooth delta for stability
+    if len(delta_t) > 10:
+        window = max(5, len(delta_t)//200)
+        kernel = np.ones(window)/window
+        delta_smooth = np.convolve(delta_t, kernel, mode='same')
+    else:
+        delta_smooth = delta_t
+
+    # Compute local changes over windows
+    step = max(10, len(delta_smooth)//100)
+    changes = np.diff(delta_smooth, n=1)
+    # Most negative change (p1 big gain), most positive (p2 big gain)
+    idx_gain_p1 = int(np.argmin(changes)) if len(changes) else 0
+    idx_gain_p2 = int(np.argmax(changes)) if len(changes) else 0
+
+    highlights = []
+    if len(dist) > 1:
+        def fmt_segment(idx):
+            i0 = max(0, idx - step)
+            i1 = min(len(dist)-1, idx + step)
+            return f"{int(dist[i0])}–{int(dist[i1])} m"
+        # Magnitudes over small windows
+        gain_p1 = float(np.min(changes)) if len(changes) else 0.0
+        gain_p2 = float(np.max(changes)) if len(changes) else 0.0
+        if gain_p1 < 0:
+            highlights.append(f"{p1_code} gains about {abs(gain_p1):.2f}s over {fmt_segment(idx_gain_p1)}")
+        if gain_p2 > 0:
+            highlights.append(f"{p2_code} gains about {abs(gain_p2):.2f}s over {fmt_segment(idx_gain_p2)}")
+
+    # Top speed difference highlight
+    try:
+        p1_speed_max = float(np.nanmax(p1_tel['Speed']))
+        p2_speed_max = float(np.nanmax(p2_tel['Speed']))
+        diff = p1_speed_max - p2_speed_max
+        faster = p1_code if diff >= 0 else p2_code
+        highlights.append(f"Highest top speed: {faster} by {abs(diff):.0f} km/h")
+    except Exception:
+        pass
+
+    # Keep to 3 items
+    return highlights[:3]
 
 def format_lap_time(seconds):
     """Format seconds to MM:SS.mmm"""
@@ -343,7 +485,7 @@ def get_available_gps(year):
         gp_names = schedule['EventName'].tolist()
         return gp_names
     except Exception as e:
-        st.error(f"Error loading Grand Prix list: {str(e)}")
+        st.info("We couldn't load the Grand Prix list right now. Please try another year.")
         return []
 
 @st.cache_data(show_spinner=False)
@@ -376,7 +518,7 @@ def get_available_sessions(year, gp_name):
         
         return sessions
     except Exception as e:
-        st.error(f"Error loading sessions: {str(e)}")
+        st.info("We couldn't load the sessions for this Grand Prix. Try a different one.")
         return []
 
 @st.cache_resource(show_spinner=False)
@@ -395,36 +537,26 @@ def get_session_drivers_with_times(_session):
         drivers = _session.drivers
         driver_info = []
         
-        # Debug info
-        st.write(f"DEBUG: Found {len(drivers)} drivers in session: {drivers[:5]}...")
-        
         for driver in drivers:
             try:
-                # Get driver info
                 info = _session.get_driver(driver)
                 if info is not None and not info.empty:
-                    # Get fastest lap time for this driver in this session
                     driver_laps = _session.laps.pick_drivers(driver)
                     if not driver_laps.empty:
                         fastest_lap = driver_laps.pick_fastest()
                         if not fastest_lap.empty and pd.notna(fastest_lap['LapTime']):
-                            # Use Abbreviation if available, otherwise use the driver identifier
                             driver_abbrev = info.get('Abbreviation', driver)
                             if pd.isna(driver_abbrev) or driver_abbrev == '':
                                 driver_abbrev = driver
-                            
                             driver_info.append({
-                                'code': driver_abbrev,  # Use abbreviation instead of car number
+                                'code': driver_abbrev,
                                 'name': f"{info['FirstName']} {info['LastName']}",
                                 'team': info['TeamName'],
                                 'lap_time': fastest_lap['LapTime'].total_seconds(),
                                 'lap_time_formatted': format_lap_time(fastest_lap['LapTime'].total_seconds()),
                                 'color': get_team_color(driver_abbrev, _session, [driver_abbrev], is_secondary=False)
                             })
-            except Exception as driver_error:
-                # Debug: show what went wrong with this driver
-                st.write(f"DEBUG: Error processing driver {driver}: {driver_error}")
-                # Fallback for drivers without complete data
+            except Exception:
                 driver_info.append({
                     'code': driver,
                     'name': driver,
@@ -433,15 +565,6 @@ def get_session_drivers_with_times(_session):
                     'lap_time_formatted': 'No Time',
                     'color': '#808080'
                 })
-        
-        # Debug: show results
-        st.write(f"DEBUG: Processed {len(driver_info)} drivers successfully")
-        if driver_info:
-            st.write(f"DEBUG: First driver: {driver_info[0]}")
-            teams = list(set([d['team'] for d in driver_info if d['team'] != 'Unknown']))
-            st.write(f"DEBUG: Found {len(teams)} teams: {teams[:3]}...")
-        
-        # Sort by lap time (fastest first)
         driver_info.sort(key=lambda x: x['lap_time'])
         return driver_info
     except Exception as e:
@@ -455,25 +578,12 @@ def get_session_drivers(_session):
 
 @st.cache_data(show_spinner=False)
 def prepare_driver_data(_session, drivers_to_plot, driver_selection_mode):
-    """Prepare driver data for analysis"""
+    """Prepare driver data for analysis with status updates."""
     try:
-        progress_placeholder = st.empty()
-        
-        with progress_placeholder.container():
-            st.info("🔄 Preparing driver data...")
-        
-        # Get fastest laps for selected drivers
         driver_data_dict = {}
-        
         for driver_code in drivers_to_plot:
-            progress_placeholder.info(f"🔄 Loading data for {driver_code}...")
-            
-            # Try to get driver laps using abbreviation first, then fallback to car number
             driver_laps = _session.laps.pick_drivers(driver_code)
-            
-            # If no laps found with abbreviation, try to find by car number
             if driver_laps.empty:
-                # Look for the car number corresponding to this abbreviation
                 try:
                     for car_num in _session.drivers:
                         driver_info = _session.get_driver(car_num)
@@ -483,235 +593,157 @@ def prepare_driver_data(_session, drivers_to_plot, driver_selection_mode):
                             break
                 except:
                     pass
-            
             if driver_laps.empty:
                 raise Exception(f"No lap data found for driver {driver_code}")
-            
             fastest_lap = driver_laps.pick_fastest()
             if fastest_lap.empty:
                 raise Exception(f"No valid fastest lap found for driver {driver_code}")
-            
             telemetry = fastest_lap.get_telemetry()
             if telemetry.empty:
                 raise Exception(f"No telemetry data found for driver {driver_code}")
-            
             driver_data_dict[driver_code] = {
                 'lap': fastest_lap,
                 'telemetry': telemetry,
                 'lap_time': fastest_lap['LapTime'].total_seconds(),
                 'compound': fastest_lap['Compound']
             }
-        
-        progress_placeholder.empty()
         return driver_data_dict
-        
     except Exception as e:
         raise Exception(f"Failed to prepare driver data: {str(e)}")
 
-def create_data_driven_lap_plot(driver_data_dict, _session, drivers_to_plot, year, gp_name, session_display):
+def create_data_driven_lap_plot(driver_data_dict, _session, drivers_to_plot, year, gp_name, session_display, watermark_text='@datadrivenlaps', units='km/h', aspect_ratio='Story 9:16'):
     """Create and return a matplotlib figure showing data-driven lap visualization"""
+    # Aspect ratio handling
+    aspect_map = {
+        'Story 9:16': (12, 21),
+        'Post 1:1': (18, 18),
+        'Widescreen 16:9': (21, 12)
+    }
+    figsize = aspect_map.get(aspect_ratio, (12, 21))
+
     # Get driver data
     p1_code, p2_code = drivers_to_plot[0], drivers_to_plot[1]
     
-    # Get driver colors with simple fallbacks
+    # Colors
     try:
         p1_color = get_team_color(p1_code, _session, drivers_to_plot, is_secondary=False, _recursion_depth=0)
     except:
-        p1_color = '#FF0000'  # Red fallback
-    
+        p1_color = '#FF0000'
     try:
         p2_color = get_team_color(p2_code, _session, drivers_to_plot, is_secondary=True, _recursion_depth=0)
     except:
-        p2_color = '#0000FF'  # Blue fallback
+        p2_color = '#0000FF'
     
-    # Create figure (mobile layout for social media)
-    fig = plt.figure(figsize=(12, 21), facecolor='#000000')
-    gs = fig.add_gridspec(6, 1, height_ratios=[0.4, 5.6, 1.0, 0.8, 1.0, 0.8], hspace=0.15)
-    
+    # Figure
+    fig = plt.figure(figsize=figsize, facecolor='#000000')
+    # Removed tyre panel for a cleaner layout (5 rows)
+    gs = fig.add_gridspec(5, 1, height_ratios=[0.5, 6.0, 1.2, 1.0, 0.8], hspace=0.15)
     ax_title = fig.add_subplot(gs[0, 0])
     ax_track = fig.add_subplot(gs[1, 0])
     ax_gear_speed = fig.add_subplot(gs[2, 0])
-    ax_tyre_info = fig.add_subplot(gs[3, 0])
-    ax_sectors = fig.add_subplot(gs[4, 0])
-    ax_timer = fig.add_subplot(gs[5, 0])
-    
-    # Style setup
+    ax_sectors = fig.add_subplot(gs[3, 0])
+    ax_timer = fig.add_subplot(gs[4, 0])
+
     clean_green = '#00FF00'
     clean_white = '#FFFFFF'
     clean_gray = '#1a1a1a'
     border_color = '#333333'
     
     panel_style = {'facecolor': clean_gray, 'edgecolor': border_color, 'linewidth': 0.5, 'alpha': 0.9}
-    for ax in [ax_gear_speed, ax_tyre_info, ax_sectors, ax_timer]:
+    for ax in [ax_gear_speed, ax_sectors, ax_timer]:
         ax.set_facecolor(panel_style['facecolor'])
         for spine in ax.spines.values():
             spine.set_color(panel_style['edgecolor'])
             spine.set_linewidth(panel_style['linewidth'])
     ax_track.set_facecolor('#0A0A0A')
-    
-    # Get telemetry data
+
+    # Telemetry
     p1_tel = driver_data_dict[p1_code]['telemetry']
     p2_tel = driver_data_dict[p2_code]['telemetry']
-    
-    # ORIGINAL TRACK COLORING LOGIC: Compare speeds at each point
-    # Use P1 telemetry as reference for track layout
+
+    # Track coloring by who is faster at each point
     track_segments_x = p1_tel['X'].to_numpy()
     track_segments_y = p1_tel['Y'].to_numpy()
-    
-    # Create track segments
     points = np.array([track_segments_x, track_segments_y]).T.reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
-    
-    # Get P1 speeds
+
     p1_speeds = p1_tel['Speed'].to_numpy()
-    
-    # Align P2 speeds to P1 distance for proper comparison
     p1_dist = p1_tel['Distance'].to_numpy()
     p2_dist = p2_tel['Distance'].to_numpy()
-    p2_speed_interp = interp1d(p2_dist, p2_tel['Speed'].to_numpy(), 
-                              kind='linear', bounds_error=False, fill_value='extrapolate')
+    p2_speed_interp = interp1d(p2_dist, p2_tel['Speed'].to_numpy(), kind='linear', bounds_error=False, fill_value='extrapolate')
     p2_speeds_aligned = p2_speed_interp(p1_dist)
-    
-    # Create segment colors based on who is faster at each point
+
+    # Constant colors across the track
     p1_color_rgba = mcolors.to_rgba(p1_color)
     p2_color_rgba = mcolors.to_rgba(p2_color)
-    
     segment_colors = []
     for i in range(len(segments)):
         if i < len(p1_speeds) and i < len(p2_speeds_aligned):
-            if p1_speeds[i] >= p2_speeds_aligned[i]:
-                segment_colors.append(p1_color_rgba)
-            else:
-                segment_colors.append(p2_color_rgba)
+            seg_col = p1_color_rgba if p1_speeds[i] >= p2_speeds_aligned[i] else p2_color_rgba
+            segment_colors.append(seg_col)
         else:
-            # Default to neutral color for edge cases
             segment_colors.append(mcolors.to_rgba('#404040'))
-    
-    # Create and add track with speed-based coloring
-    lc = LineCollection(segments, colors=segment_colors, linewidths=10, alpha=0.9, capstyle='round')
+    lc = LineCollection(segments, colors=segment_colors, linewidths=10, capstyle='round', alpha=0.9)
     ax_track.add_collection(lc)
-    
-    # Add car positions at mid-lap points
+
+    # Car markers
     mid_point_p1 = len(p1_tel) // 2
     mid_point_p2 = len(p2_tel) // 2
-    
-    # Car dots (without borders) - positioned at mid-lap
     car_radius = np.mean([track_segments_x.max() - track_segments_x.min(), 
                          track_segments_y.max() - track_segments_y.min()]) * 0.008
-    
-    car1_circle = Circle((track_segments_x[mid_point_p1], track_segments_y[mid_point_p1]), 
-                       radius=car_radius, facecolor=p1_color, edgecolor='none', zorder=10)
-    car2_circle = Circle((track_segments_x[mid_point_p2], track_segments_y[mid_point_p2]), 
-                       radius=car_radius, facecolor=p2_color, edgecolor='none', zorder=10)
+    car1_circle = Circle((track_segments_x[mid_point_p1], track_segments_y[mid_point_p1]), radius=car_radius, facecolor=p1_color, edgecolor='none', zorder=10)
+    car2_circle = Circle((track_segments_x[mid_point_p2], track_segments_y[mid_point_p2]), radius=car_radius, facecolor=p2_color, edgecolor='none', zorder=10)
     ax_track.add_patch(car1_circle)
     ax_track.add_patch(car2_circle)
-    
     ax_track.set_xlim(track_segments_x.min() - 200, track_segments_x.max() + 200)
     ax_track.set_ylim(track_segments_y.min() - 200, track_segments_y.max() + 200)
     ax_track.set_aspect('equal')
     ax_track.axis('off')
-    
-    # Add legend for track coloring - positioned above the track
+
+    # Legend
     legend_elements = [
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=p1_color, 
-                  markeredgecolor='none', markersize=12, label=f"{p1_code}"),
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=p2_color, 
-                  markeredgecolor='none', markersize=12, label=f"{p2_code}")
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=p1_color, markeredgecolor='none', markersize=12, label=f"{p1_code}"),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=p2_color, markeredgecolor='none', markersize=12, label=f"{p2_code}")
     ]
-    ax_track.legend(handles=legend_elements, loc='upper center', ncol=2, 
-                   facecolor=clean_gray, edgecolor=border_color, labelcolor=clean_white, 
-                   fontsize=14, bbox_to_anchor=(0.5, 1.08))
-    
+    ax_track.legend(handles=legend_elements, loc='upper center', ncol=2, facecolor=clean_gray, edgecolor=border_color, labelcolor=clean_white, fontsize=14, bbox_to_anchor=(0.5, 1.08))
+
     # Title
     ax_title.text(0.5, 0.5, f'{year} {gp_name} {session_display}', 
                  ha='center', va='center', fontsize=24, color=clean_white, fontweight='bold')
     ax_title.axis('off')
-    
-    # Speed comparison only (removed brake/throttle)
-    ax_gear_speed.plot(p1_tel['Speed'], color=p1_color, linewidth=3, label=f'{p1_code} Speed', alpha=0.8)
-    
-    # Align P2 speed to P1 length for comparison
+
+    # Speed comparison with units toggle
+    p1_speed_units = convert_speed_units(p1_tel['Speed'], units)
+    p2_speed_units = convert_speed_units(p2_tel['Speed'], units)
+    ax_gear_speed.plot(p1_speed_units, color=p1_color, linewidth=3, label=f'{p1_code} Speed', alpha=0.8)
     p2_speed_aligned_plot = np.interp(np.linspace(0, len(p2_tel)-1, len(p1_tel)), 
-                                     range(len(p2_tel)), p2_tel['Speed'])
+                                     range(len(p2_tel)), p2_speed_units)
     ax_gear_speed.plot(p2_speed_aligned_plot, color=p2_color, linewidth=3, label=f'{p2_code} Speed', alpha=0.8)
-    
-    ax_gear_speed.set_ylabel('Speed (km/h)', color=clean_white, fontsize=14, fontweight='bold')
+    ax_gear_speed.set_ylabel(f'Speed ({units})', color=clean_white, fontsize=14, fontweight='bold')
     ax_gear_speed.tick_params(colors=clean_white, labelsize=12)
     ax_gear_speed.legend(loc='upper right', facecolor=clean_gray, edgecolor=border_color, labelcolor=clean_white)
     ax_gear_speed.grid(True, alpha=0.15, color=clean_white, linestyle='-', linewidth=0.5)
-    
-    # Tire information with life
-    p1_compound = driver_data_dict[p1_code]['compound'] if driver_data_dict[p1_code]['compound'] else 'UNKNOWN'
-    p2_compound = driver_data_dict[p2_code]['compound'] if driver_data_dict[p2_code]['compound'] else 'UNKNOWN'
-    
-    # Get tire life from lap data
-    p1_tyre_life = driver_data_dict[p1_code]['lap'].get('TyreLife', 'N/A')
-    p2_tyre_life = driver_data_dict[p2_code]['lap'].get('TyreLife', 'N/A')
-    
-    # Handle NaN values
-    if pd.isna(p1_tyre_life):
-        p1_tyre_life = 'N/A'
-    else:
-        p1_tyre_life = int(p1_tyre_life)
-        
-    if pd.isna(p2_tyre_life):
-        p2_tyre_life = 'N/A'
-    else:
-        p2_tyre_life = int(p2_tyre_life)
-    
-    # Tire compound colors
-    compound_colors = {
-        'SOFT': '#FF0000',     # Red
-        'MEDIUM': '#FFFF00',   # Yellow  
-        'HARD': '#FFFFFF',     # White
-        'INTERMEDIATE': '#00FF00', # Green
-        'WET': '#0000FF'       # Blue
-    }
-    
-    p1_compound_color = compound_colors.get(p1_compound, clean_white)
-    p2_compound_color = compound_colors.get(p2_compound, clean_white)
-    
-    # Tire panel
-    ax_tyre_info.text(0.25, 0.8, f"{p1_code}", fontsize=16, color=p1_color, fontweight='bold', ha='center')
-    ax_tyre_info.text(0.75, 0.8, f"{p2_code}", fontsize=16, color=p2_color, fontweight='bold', ha='center')
-    
-    # Compound with colored background
-    ax_tyre_info.text(0.25, 0.5, p1_compound, fontsize=14, fontweight='bold', color='black', ha='center',
-                     bbox=dict(boxstyle="round,pad=0.3", facecolor=p1_compound_color, edgecolor=p1_color, linewidth=1.5))
-    ax_tyre_info.text(0.75, 0.5, p2_compound, fontsize=14, fontweight='bold', color='black', ha='center',
-                     bbox=dict(boxstyle="round,pad=0.3", facecolor=p2_compound_color, edgecolor=p2_color, linewidth=1.5))
-    
-    # Tire life
-    p1_life_text = f"Life: {p1_tyre_life}" if p1_tyre_life != 'N/A' else "Life: N/A"
-    p2_life_text = f"Life: {p2_tyre_life}" if p2_tyre_life != 'N/A' else "Life: N/A"
-    ax_tyre_info.text(0.25, 0.2, p1_life_text, fontsize=12, color=clean_white, ha='center')
-    ax_tyre_info.text(0.75, 0.2, p2_life_text, fontsize=12, color=clean_white, ha='center')
-    ax_tyre_info.axis('off')
-    
-    # Lap times comparison with proper formatting
+
+    # Lap times and gap
     lap_time_1 = driver_data_dict[p1_code]['lap_time']
     lap_time_2 = driver_data_dict[p2_code]['lap_time']
     delta = abs(lap_time_1 - lap_time_2)
-    
     ax_sectors.text(0.1, 0.7, f'{p1_code}:', fontsize=16, color=p1_color, fontweight='bold')
     ax_sectors.text(0.35, 0.7, format_lap_time(lap_time_1), fontsize=16, color=clean_white, family='monospace')
     ax_sectors.text(0.1, 0.3, f'{p2_code}:', fontsize=16, color=p2_color, fontweight='bold')
     ax_sectors.text(0.35, 0.3, format_lap_time(lap_time_2), fontsize=16, color=clean_white, family='monospace')
-    
     gap_color = clean_green if delta < 0.1 else ('#FFA500' if delta < 0.5 else '#FF0000')
     ax_sectors.text(0.7, 0.5, f'⏱️ GAP: {delta:.3f}s', fontsize=16, color=gap_color, fontweight='bold')
     ax_sectors.axis('off')
-    
-    # Final info
+
+    # Footer panel
     ax_timer.text(0.5, 0.5, '🏁 FASTEST LAP COMPARISON', 
                  ha='center', va='center', fontsize=20, color=clean_white, fontweight='bold')
     ax_timer.axis('off')
-    
-    # Add watermark
-    fig.text(0.95, 0.98, '@datadrivenlaps', fontsize=26, color='#FFFFFF', 
-            alpha=0.7, ha='right', va='top', fontweight='bold', 
-            transform=fig.transFigure, rotation=0)
-    
+
+    # Watermark
+    fig.text(0.95, 0.98, watermark_text, fontsize=26, color='#FFFFFF', 
+            alpha=0.7, ha='right', va='top', fontweight='bold', transform=fig.transFigure, rotation=0)
     return fig
 
 # Main App Layout
@@ -720,157 +752,148 @@ def main():
     
     # Header
     st.markdown('<h1 class="main-header">🏎️ F1 Data Driven Laps</h1>', unsafe_allow_html=True)
+    st.markdown('<div class="tagline">Who\'s faster where, and why? Watch a lap unfold with real telemetry.</div>', unsafe_allow_html=True)
     st.markdown("### Create stunning F1 data-driven lap visualizations from telemetry data")
     
-    # Responsive layout - use full width on mobile, sidebar on desktop
+    # Ensure common state defaults
+    st.session_state.setdefault('mobile_view', False)
+    st.session_state.setdefault('units', 'km/h')
+    st.session_state.setdefault('aspect_ratio', 'Story 9:16')
+
+    # Handle pending preset before any widgets are created
+    if st.session_state.get('pending_preset', False):
+        # Clear widget-bound keys so we can set them safely
+        for key in ['year_input', 'gp_select', 'session_select', 'driver_mode']:
+            if key in st.session_state:
+                try:
+                    del st.session_state[key]
+                except Exception:
+                    pass
+        # Apply preset values
+        st.session_state['year_input'] = st.session_state.get('preset_year', 2025)
+        st.session_state['gp_select'] = st.session_state.get('preset_gp', 'Monaco Grand Prix')
+        st.session_state['session_select'] = st.session_state.get('preset_session', 'Qualifying')
+        st.session_state['driver_mode'] = 'P1 vs P2'
+        st.session_state['auto_generate'] = True
+        st.session_state['pending_preset'] = False
+        st.rerun()
+
+    # Top-level demo button (before any selection widgets)
+    if not st.session_state.get('hide_demo', False):
+        demo_col1, demo_col2 = st.columns([1, 3])
+        with demo_col1:
+            if st.button("🎬 Try a demo"):
+                st.session_state['preset_year'] = 2025
+                st.session_state['preset_gp'] = 'Monaco Grand Prix'
+                st.session_state['preset_session'] = 'Qualifying'
+                st.session_state['pending_preset'] = True
+                st.session_state['hide_demo'] = True
+                st.rerun()
+    
+    # Sidebar / Mobile controls
     if st.session_state.get('mobile_view', False):
-        # Mobile layout - everything in main area
         st.header("🏁 Race Selection")
-        
-        # Mobile-friendly input layout
         col_year, col_gp = st.columns([1, 2])
         with col_year:
-            year = st.number_input("Year", min_value=2018, max_value=2025, value=2025, step=1)
+            year = st.number_input("Year", min_value=2018, max_value=2025, value=st.session_state.get('year_input', 2025), step=1, key='year_input')
         with col_gp:
             gp_options = get_available_gps(year)
             if not gp_options:
                 st.error("No Grand Prix data available for selected year")
                 return
-            gp_name = st.selectbox("Grand Prix", gp_options, index=0)
-        
-        # Session selection
+            default_gp = st.session_state.get('gp_select', gp_options[0]) if gp_options else None
+            gp_name = st.selectbox("Grand Prix", gp_options, index=gp_options.index(default_gp) if default_gp in gp_options else 0, key='gp_select')
         session_options = get_available_sessions(year, gp_name)
         if not session_options:
             st.error("No session data available for selected Grand Prix")
             return
-        session_display = st.selectbox("Session", [s[1] for s in session_options], index=0)
+        default_session = st.session_state.get('session_select', session_options[0][1])
+        session_display = st.selectbox("Session", [s[1] for s in session_options], index=[s[1] for s in session_options].index(default_session) if default_session in [s[1] for s in session_options] else 0, key='session_select')
         session_name = next(s[0] for s in session_options if s[1] == session_display)
-        
         st.header("👥 Driver Selection")
-        driver_mode = st.selectbox("Selection Mode", ["Specific Drivers", "Teammates", "P1 vs P2"], index=2)
-        
+        driver_mode = st.selectbox("Selection Mode", ["Specific Drivers", "Teammates", "P1 vs P2"], index=2, key='driver_mode')
     else:
-        # Desktop layout - use sidebar
         with st.sidebar:
             st.header("🏁 Race Selection")
-            
-            # Year selection
-            year = st.number_input("Year", min_value=2018, max_value=2025, value=2025, step=1)
-            
-            # GP selection
+            year = st.number_input("Year", min_value=2018, max_value=2025, value=st.session_state.get('year_input', 2025), step=1, key='year_input')
             gp_options = get_available_gps(year)
             if not gp_options:
                 st.error("No Grand Prix data available for selected year")
                 return
-            
-            gp_name = st.selectbox("Grand Prix", gp_options, index=0)
-            
-            # Session selection
+            default_gp = st.session_state.get('gp_select', gp_options[0]) if gp_options else None
+            gp_name = st.selectbox("Grand Prix", gp_options, index=gp_options.index(default_gp) if default_gp in gp_options else 0, key='gp_select')
             session_options = get_available_sessions(year, gp_name)
             if not session_options:
                 st.error("No session data available for selected Grand Prix")
                 return
-            
-            session_display = st.selectbox("Session", [s[1] for s in session_options], index=0)
+            default_session = st.session_state.get('session_select', session_options[0][1])
+            session_display = st.selectbox("Session", [s[1] for s in session_options], index=[s[1] for s in session_options].index(default_session) if default_session in [s[1] for s in session_options] else 0, key='session_select')
             session_name = next(s[0] for s in session_options if s[1] == session_display)
-            
             st.header("👥 Driver Selection")
-            
-            # Driver selection mode
-            driver_mode = st.radio(
-                "Selection Mode",
-                ["Specific Drivers", "Teammates", "P1 vs P2"],
-                index=2
-            )
-    
-    # Load session for driver selection (common for both layouts)
+            driver_mode = st.radio("Selection Mode", ["Specific Drivers", "Teammates", "P1 vs P2"], index=2, key='driver_mode')
+
+
+    # Load session and driver list with status
     try:
-        with st.spinner("Loading session data..."):
-            session = load_session_data(year, gp_name, session_name)
-            driver_info = get_session_drivers_with_times(session)
-            st.session_state.session_loaded = True
+        session = load_session_data(year, gp_name, session_name)
+        driver_info = get_session_drivers_with_times(session)
+        st.session_state.session_loaded = True
     except Exception as e:
-        st.error(f"Error loading session: {str(e)}")
+        st.info("We couldn't load data for this selection. Please try another session.")
         return
-    
-    # Driver selection logic (common for both layouts)
+
     drivers_to_plot = []
-    
-    # Prepare team list for teammate selection
     teams = list(set([d['team'] for d in driver_info if d['team'] != 'Unknown']))
-    
-    # Mobile/Desktop responsive driver selection
+
+    # Driver selection UI (unchanged logic, but without debug)
     if not st.session_state.get('mobile_view', False):
-        # Desktop - continue in sidebar
         with st.sidebar:
             if driver_mode == "Specific Drivers":
-                # Show driver selection with formatted options
                 driver_options = [f"{d['code']} - {d['name']} ({d['lap_time_formatted']})" for d in driver_info]
-                selected_drivers = st.multiselect(
-                    "Select 2 drivers",
-                    driver_options,
-                    max_selections=2,
-                    help="Choose any two drivers from the session to compare their fastest laps"
-                )
+                selected_drivers = st.multiselect("Select 2 drivers", driver_options, max_selections=2, help="Choose any two drivers from the session to compare their fastest laps")
                 drivers_to_plot = [d.split(' - ')[0] for d in selected_drivers]
-                
                 if len(selected_drivers) == 2:
                     st.success(f"🏎️ Selected: {drivers_to_plot[0]} vs {drivers_to_plot[1]}")
                 elif len(selected_drivers) == 1:
                     st.info(f"Selected: {drivers_to_plot[0]} - Please select one more driver")
-                
             elif driver_mode == "Teammates":
                 if teams:
-                    selected_team = st.selectbox(
-                        "Select Team", 
-                        teams,
-                        help="Choose a team to compare their drivers"
-                    )
+                    selected_team = st.selectbox("Select Team", teams, help="Choose a team to compare their drivers")
                     teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
                     if len(teammates) >= 2:
                         drivers_to_plot = teammates[:2]
-                        # Show which drivers were selected
                         teammate_names = [d['name'].split()[-1] for d in driver_info if d['code'] in drivers_to_plot]
                         st.success(f"🤝 Selected: {drivers_to_plot[0]} vs {drivers_to_plot[1]}")
                         st.info(f"Comparing teammates: {teammate_names[0]} vs {teammate_names[1]}")
                     else:
-                        st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
+                        st.info(f"Only {len(teammates)} driver(s) found for {selected_team}")
                         if len(teammates) == 1:
                             st.info(f"Available: {teammates[0]}")
                 else:
-                    st.error("No teams found with valid data in this session")
-                    
+                    st.info("No teams found with valid data in this session.")
             elif driver_mode == "P1 vs P2":
                 try:
-                    # First try using session results for proper P1 vs P2
                     results = session.results
                     if not results.empty and len(results) >= 2:
                         p1_driver = results.iloc[0]['Abbreviation'] 
                         p2_driver = results.iloc[1]['Abbreviation']
                         drivers_to_plot = [p1_driver, p2_driver]
-                        
-                        # Get driver names for display
                         p1_name = next((d['name'].split()[-1] for d in driver_info if d['code'] == p1_driver), p1_driver)
                         p2_name = next((d['name'].split()[-1] for d in driver_info if d['code'] == p2_driver), p2_driver)
-                        
                         st.success(f"🏆 P1: {p1_driver} ({p1_name}) vs P2: {p2_driver} ({p2_name})")
                         st.info("Using official session results for P1 vs P2")
                     else:
-                        # Fallback to fastest two drivers from our sorted list
                         if len(driver_info) >= 2:
                             p1_driver = driver_info[0]['code']
                             p2_driver = driver_info[1]['code']
                             drivers_to_plot = [p1_driver, p2_driver]
-                            
                             p1_time = driver_info[0]['lap_time_formatted']
                             p2_time = driver_info[1]['lap_time_formatted']
-                            
                             st.success(f"🏆 Fastest: {p1_driver} ({p1_time}) vs {p2_driver} ({p2_time})")
                             st.info("Using fastest lap times (no official results available)")
                         else:
                             st.warning("Not enough drivers with lap times available")
-                except Exception as e:
-                    # Fallback to fastest two drivers from our sorted list
+                except Exception:
                     try:
                         if len(driver_info) >= 2:
                             p1_driver = driver_info[0]['code']
@@ -881,76 +904,64 @@ def main():
                             st.warning("Not enough drivers with lap times available")
                     except:
                         st.warning("Could not determine P1 vs P2")
+            # Auto-generate when 2 drivers are selected (desktop)
+            if len(drivers_to_plot) == 2:
+                st.session_state['hide_demo'] = True
+            # Optional settings after generate button
+            st.markdown("---")
+            st.subheader("⚙️ Settings")
+            st.session_state.units = st.selectbox("Speed units", ["km/h", "mph"], index=["km/h","mph"].index(st.session_state.get('units','km/h')))
+            st.session_state.aspect_ratio = st.selectbox("Aspect ratio", ["Story 9:16","Post 1:1","Widescreen 16:9"], index=["Story 9:16","Post 1:1","Widescreen 16:9"].index(st.session_state.get('aspect_ratio','Story 9:16')))
+            if st.button("📱 Toggle Mobile View"):
+                st.session_state.mobile_view = not st.session_state.get('mobile_view', False)
+                st.rerun()
     else:
-        # Mobile - in main area with enhanced UI
         if driver_mode == "Specific Drivers":
-            # Show driver selection with formatted options
             driver_options = [f"{d['code']} - {d['name']} ({d['lap_time_formatted']})" for d in driver_info]
-            selected_drivers = st.multiselect(
-                "Select 2 drivers",
-                driver_options,
-                max_selections=2,
-                help="Choose any two drivers from the session to compare their fastest laps"
-            )
+            selected_drivers = st.multiselect("Select 2 drivers", driver_options, max_selections=2, help="Choose any two drivers from the session to compare their fastest laps")
             drivers_to_plot = [d.split(' - ')[0] for d in selected_drivers]
-            
             if len(selected_drivers) == 2:
                 st.success(f"🏎️ Selected: {drivers_to_plot[0]} vs {drivers_to_plot[1]}")
             elif len(selected_drivers) == 1:
                 st.info(f"Selected: {drivers_to_plot[0]} - Please select one more driver")
-            
         elif driver_mode == "Teammates":
             if teams:
-                selected_team = st.selectbox(
-                    "Select Team", 
-                    teams,
-                    help="Choose a team to compare their drivers"
-                )
+                selected_team = st.selectbox("Select Team", teams, help="Choose a team to compare their drivers")
                 teammates = [d['code'] for d in driver_info if d['team'] == selected_team]
                 if len(teammates) >= 2:
                     drivers_to_plot = teammates[:2]
-                    # Show which drivers were selected
                     teammate_names = [d['name'].split()[-1] for d in driver_info if d['code'] in drivers_to_plot]
                     st.success(f"🤝 Selected: {drivers_to_plot[0]} vs {drivers_to_plot[1]}")
                     st.info(f"Comparing teammates: {teammate_names[0]} vs {teammate_names[1]}")
                 else:
-                    st.warning(f"Only {len(teammates)} driver(s) found for {selected_team}")
+                    st.info(f"Only {len(teammates)} driver(s) found for {selected_team}")
                     if len(teammates) == 1:
                         st.info(f"Available: {teammates[0]}")
             else:
-                st.error("No teams found with valid data in this session")
-                
+                st.info("No teams found with valid data in this session.")
         elif driver_mode == "P1 vs P2":
             try:
-                # First try using session results for proper P1 vs P2
                 results = session.results
                 if not results.empty and len(results) >= 2:
                     p1_driver = results.iloc[0]['Abbreviation']
                     p2_driver = results.iloc[1]['Abbreviation']
                     drivers_to_plot = [p1_driver, p2_driver]
-                    
-                    # Get driver names for display
                     p1_name = next((d['name'].split()[-1] for d in driver_info if d['code'] == p1_driver), p1_driver)
                     p2_name = next((d['name'].split()[-1] for d in driver_info if d['code'] == p2_driver), p2_driver)
-                    
                     st.success(f"🏆 P1: {p1_driver} ({p1_name}) vs P2: {p2_driver} ({p2_name})")
                     st.info("Using official session results for P1 vs P2")
                 else:
-                    # Fallback to fastest two drivers from our sorted list
                     if len(driver_info) >= 2:
                         p1_driver = driver_info[0]['code']
                         p2_driver = driver_info[1]['code']
                         drivers_to_plot = [p1_driver, p2_driver]
-                        
                         p1_time = driver_info[0]['lap_time_formatted']
                         p2_time = driver_info[1]['lap_time_formatted']
-                        
                         st.success(f"🏆 Fastest: {p1_driver} ({p1_time}) vs {p2_driver} ({p2_time})")
                         st.info("Using fastest lap times (no official results available)")
                     else:
                         st.warning("Not enough drivers with lap times available")
-            except Exception as e:
-                # Fallback to fastest two drivers from our sorted list
+            except Exception:
                 try:
                     if len(driver_info) >= 2:
                         p1_driver = driver_info[0]['code']
@@ -961,121 +972,74 @@ def main():
                         st.warning("Not enough drivers with lap times available")
                 except:
                     st.warning("Could not determine P1 vs P2")
-    
-    # Mobile view toggle
-    st.sidebar.markdown("---")
-    if st.sidebar.button("📱 Toggle Mobile View"):
-        st.session_state.mobile_view = not st.session_state.get('mobile_view', False)
-        st.rerun()
-    
-    # Main content area (responsive)
+        # Auto-generate when 2 drivers are selected (mobile)
+        if len(drivers_to_plot) == 2:
+            st.session_state['hide_demo'] = True
+        # Optional settings for mobile at bottom
+        st.markdown("---")
+        st.subheader("⚙️ Settings")
+        st.session_state.units = st.selectbox("Speed units", ["km/h", "mph"], index=["km/h","mph"].index(st.session_state.get('units','km/h')))
+        st.session_state.aspect_ratio = st.selectbox("Aspect ratio", ["Story 9:16","Post 1:1","Widescreen 16:9"], index=["Story 9:16","Post 1:1","Widescreen 16:9"].index(st.session_state.get('aspect_ratio','Story 9:16')))
+
+
+
+    # Main content area - Auto-generate when 2 drivers are selected
     if len(drivers_to_plot) == 2:
-        st.markdown(f'<div class="status-box success-box">✅ Ready to analyze: <strong>{drivers_to_plot[0]} vs {drivers_to_plot[1]}</strong></div>', unsafe_allow_html=True)
+        st.caption(f"Ready to analyze: {drivers_to_plot[0]} vs {drivers_to_plot[1]}")
         
-        if st.session_state.get('mobile_view', False):
-            # Mobile: single column layout
-            if st.button("🏎️ Generate Data Driven Lap Visualization", type="primary", use_container_width=True):
-                try:
-                    # Prepare data
-                    with st.spinner("🏎️ Preparing driver data..."):
-                        driver_data = prepare_driver_data(session, drivers_to_plot, driver_mode)
-                    
-                    # Display lap time comparison with proper formatting
-                    st.subheader("📊 Lap Time Comparison")
-                    
-                    lap_time_1 = driver_data[drivers_to_plot[0]]['lap_time']
-                    lap_time_2 = driver_data[drivers_to_plot[1]]['lap_time']
-                    delta = abs(lap_time_1 - lap_time_2)
-                    
-                    # Mobile-friendly metrics layout
-                    st.metric(
-                        f"{drivers_to_plot[0]} (Fastest Lap)",
-                        format_lap_time(lap_time_1),
-                        f"{driver_data[drivers_to_plot[0]]['compound']}"
-                    )
-                    st.metric(
-                        f"{drivers_to_plot[1]} (Fastest Lap)",
-                        format_lap_time(lap_time_2),
-                        f"{driver_data[drivers_to_plot[1]]['compound']}"
-                    )
-                    
-                    st.info(f"⏱️ Gap: {delta:.3f} seconds")
-                    
-                    # Generate image
-                    st.subheader("🎨 Image Generation")
-                    
-                    # Generate and display plot
-                    st.subheader("🏁 Your Data Driven Lap Visualization")
-                    
-                    with st.spinner("🏎️ Creating data-driven lap visualization..."):
-                        fig = create_data_driven_lap_plot(
-                            driver_data, session, drivers_to_plot, year, gp_name, session_display
-                        )
-                    
-                    # Display plot directly
-                    st.pyplot(fig, use_container_width=True)
-                    plt.close(fig)  # Clean up
-                        
-                except Exception as e:
-                    st.error(f"❌ Error generating visualization: {str(e)}")
-            
-            # Mobile tips
-            st.info("💡 **Mobile Tips:**\n🏎️ Visualization generates in just a few seconds\n🏎️ Optimized for mobile viewing\n🏎️ Interactive matplotlib display\n🏎️ Perfect for analysis")
-            
-        else:
-            # Desktop: two-column layout
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                if st.button("🏎️ Generate Data Driven Lap Visualization", type="primary", use_container_width=True):
-                    try:
-                        # Prepare data
-                        with st.spinner("🏎️ Preparing driver data..."):
-                            driver_data = prepare_driver_data(session, drivers_to_plot, driver_mode)
-                        
-                        # Display lap time comparison with proper formatting
-                        st.subheader("📊 Lap Time Comparison")
-                        
-                        lap_time_1 = driver_data[drivers_to_plot[0]]['lap_time']
-                        lap_time_2 = driver_data[drivers_to_plot[1]]['lap_time']
-                        delta = abs(lap_time_1 - lap_time_2)
-                        
-                        col_a, col_b = st.columns(2)
-                        with col_a:
-                            st.metric(
-                                f"{drivers_to_plot[0]} (Fastest Lap)",
-                                format_lap_time(lap_time_1),
-                                f"{driver_data[drivers_to_plot[0]]['compound']}"
-                            )
-                        with col_b:
-                            st.metric(
-                                f"{drivers_to_plot[1]} (Fastest Lap)",
-                                format_lap_time(lap_time_2),
-                                f"{driver_data[drivers_to_plot[1]]['compound']}"
-                            )
-                        
-                        st.info(f"⏱️ Gap: {delta:.3f} seconds")
-                        
-                        # Generate and display plot
-                        st.subheader("🏁 Your Data Driven Lap Visualization")
-                        
-                        with st.spinner("🏎️ Creating data-driven lap visualization..."):
-                            fig = create_data_driven_lap_plot(
-                                driver_data, session, drivers_to_plot, year, gp_name, session_display
-                            )
-                        
-                        # Display plot directly
-                        st.pyplot(fig, use_container_width=True)
-                        plt.close(fig)  # Clean up
-                            
-                    except Exception as e:
-                        st.error(f"❌ Error generating visualization: {str(e)}")
-            
-            with col2:
-                st.info("💡 **Tips:**\n🏎️ Visualization generates in just a few seconds\n🏎️ Interactive matplotlib display\n🏎️ Perfect for detailed analysis\n🏎️ Mobile responsive design")
-    
+        # Auto-generate visualization immediately
+        try:
+            driver_data = prepare_driver_data(session, drivers_to_plot, driver_mode)
+            # Build main figure and show it first, centered
+            fig = create_data_driven_lap_plot(
+                driver_data, session, drivers_to_plot, year, gp_name, session_display,
+                watermark_text='@datadrivenlaps',
+                units=st.session_state.get('units', 'km/h'),
+                aspect_ratio=st.session_state.get('aspect_ratio', 'Story 9:16')
+            )
+            st.subheader("🏁 Your Data Driven Lap Visualization")
+            center_left, center, center_right = st.columns([1, 2.2, 1])
+            with center:
+                st.pyplot(fig, use_container_width=True)
+
+            # Story highlights
+            p1_tel = driver_data[drivers_to_plot[0]]['telemetry']
+            p2_tel = driver_data[drivers_to_plot[1]]['telemetry']
+            highlights = generate_story_highlights(drivers_to_plot[0], drivers_to_plot[1], p1_tel, p2_tel)
+            if highlights:
+                st.subheader("📌 Highlights")
+                for h in highlights:
+                    st.markdown(f"- {h}")
+
+            # Download buttons for multiple aspect ratios
+            st.subheader("⬇️ Download")
+            from io import BytesIO
+            def fig_bytes(ar_label: str) -> BytesIO:
+                f = create_data_driven_lap_plot(
+                    driver_data, session, drivers_to_plot, year, gp_name, session_display,
+                    watermark_text='@datadrivenlaps',
+                    units=st.session_state.get('units', 'km/h'),
+                    aspect_ratio=ar_label
+                )
+                buf = BytesIO()
+                f.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                buf.seek(0)
+                plt.close(f)
+                return buf
+            col_d1, col_d2, col_d3 = st.columns([1,1,1])
+            filename_base = f"{year}_{gp_name.replace(' ', '_')}_{session_display.replace(' ', '')}_{drivers_to_plot[0]}_vs_{drivers_to_plot[1]}"
+            with col_d1:
+                st.download_button("Story 9:16 (PNG)", data=fig_bytes('Story 9:16'), file_name=f"{filename_base}_story.png", mime="image/png")
+            with col_d2:
+                st.download_button("Post 1:1 (PNG)", data=fig_bytes('Post 1:1'), file_name=f"{filename_base}_post.png", mime="image/png")
+            with col_d3:
+                st.download_button("Widescreen 16:9 (PNG)", data=fig_bytes('Widescreen 16:9'), file_name=f"{filename_base}_16x9.png", mime="image/png")
+
+            plt.close(fig)
+        except Exception as e:
+            st.info("Something went wrong while generating the visualization. Please try again.")
     else:
-        st.markdown('<div class="status-box info-box">ℹ️ Please select exactly 2 drivers to generate a data driven lap image.</div>', unsafe_allow_html=True)
+        st.caption("Select exactly two drivers to generate a data-driven lap image.")
     
     # Footer
     st.markdown("---")
