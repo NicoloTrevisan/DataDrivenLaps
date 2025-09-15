@@ -116,3 +116,121 @@ REMEMBER THESE THREE THINGS
 1) main() wires the UI together and triggers the flow.
 2) FastF1 loads the session; prepare_driver_data() grabs each driver's fastest lap and telemetry.
 3) create_data_driven_lap_plot() draws everything you see.
+
+DEVELOPER REFERENCE (FUNCTION-BY-FUNCTION)
+
+setup_environment() -> None
+- Sets Matplotlib dpi/savefig dpi.
+- Calls fastf1.plotting.setup_mpl with compatibility fallback.
+- Enables FastF1 disk cache at ~/cache_fastf1_streamlit.
+
+adjust_color_luminance(color_hex: str, factor: float) -> str
+- Lightens (>1.0) or darkens (<1.0) a HEX color. Validates inputs and clamps values.
+- Returns safe HEX even on malformed inputs.
+
+get_team_color(driver_code: str, session: fastf1.core.Session, drivers_to_plot: list[str], is_secondary: bool = False, _recursion_depth: int = 0) -> str
+- Priority order:
+  1) TEAM_COLORS_MAPPING via session.get_driver(...)["TeamName"], with luminance tweak for teammates
+  2) fastf1.plotting.get_driver_color(...), unless generic greys
+  3) DEFAULT_COLORS index fallback with luminance tweak
+- Always returns a HEX; recursion guard prevents loops.
+
+get_available_gps(year: int) -> list[str]   [@st.cache_data]
+- Returns event names from fastf1.get_event_schedule(year).
+- On failure: st.info + [].
+
+get_available_sessions(year: int, gp_name: str) -> list[tuple[str, str]]   [@st.cache_data]
+- Probes standard sessions (FP1/FP2/FP3/SQ/Sprint/Qualifying/Race) and returns [(internal, display)].
+- Skips missing sessions gracefully. On failure: st.info + [].
+
+load_session_data(year: int, gp_name: str, session_name: str) -> fastf1.core.Session   [@st.cache_resource]
+- session = fastf1.get_session(...); session.load().
+- Returns loaded session (laps/telemetry depending on type). Raises descriptive Exception on error.
+
+get_session_drivers_with_times(_session: fastf1.core.Session) -> list[dict]
+- Builds sortable driver list for UI:
+  { code, name, team, lap_time (float seconds), lap_time_formatted, color }.
+- Picks fastest lap per driver with pick_fastest(); sorts ascending by lap_time.
+- Per-driver try/except keeps the rest of the list usable if one driver has bad data.
+
+get_session_drivers(_session) -> list[dict]
+- Compatibility wrapper; returns get_session_drivers_with_times(_session).
+
+prepare_driver_data(_session: fastf1.core.Session, drivers_to_plot: list[str], driver_selection_mode: str) -> dict[str, dict]   [@st.cache_data]
+- Resolves each selected driver's fastest lap + telemetry.
+- Attempts abbreviation first (_session.laps.pick_drivers(code)); falls back to car number scan when needed.
+- Returns per-driver:
+  {
+    'lap': FastestLapRow,
+    'telemetry': DataFrame (must include X, Y, Speed, Distance),
+    'lap_time': float_seconds,
+    'compound': str
+  }
+- Raises if data is missing (clear messages to aid UX).
+
+convert_speed_units(speed_kmh_series: pandas.Series, units: str) -> pandas.Series
+- Converts km/h → mph when units == 'mph'; otherwise returns unchanged.
+
+compute_time_delta_by_distance(p1_tel: pandas.DataFrame, p2_tel: pandas.DataFrame) -> tuple[np.ndarray, np.ndarray]
+- Aligns P2 speed to P1 distance grid (scipy interp1d).
+- Computes dt over each distance step for both drivers (km/h→m/s), accumulates (dt2 - dt1).
+- Returns (distance_m, delta_time_s).
+
+create_time_delta_plot(distance_m: np.ndarray, delta_time_s: np.ndarray, p1_code: str, p2_code: str) -> matplotlib.figure.Figure
+- Small helper to visualize delta vs distance (not required for main flow).
+
+generate_story_highlights(p1_code: str, p2_code: str, p1_tel: pandas.DataFrame, p2_tel: pandas.DataFrame) -> list[str]
+- Uses compute_time_delta_by_distance(); light smoothing; picks segments with largest changes.
+- Adds a simple top-speed comparison. Returns up to 3 short strings.
+
+format_lap_time(seconds: float) -> str
+- Formats seconds as M:SS.mmm.
+
+create_data_driven_lap_plot(
+  driver_data_dict: dict,
+  _session: fastf1.core.Session,
+  drivers_to_plot: list[str],
+  year: int,
+  gp_name: str,
+  session_display: str,
+  watermark_text: str = '@datadrivenlaps',
+  units: str = 'km/h',
+  aspect_ratio: str = 'Story 9:16'
+) -> matplotlib.figure.Figure
+- Constructs multi-panel figure:
+  - Title panel (event + session)
+  - Track panel (LineCollection), segments colored by faster driver at each point
+  - Speed panel (aligned overlay, with units)
+  - Lap times panel (formatted fastest laps + gap coloring)
+  - Footer/watermark panel
+- Key steps:
+  - Track geometry from P1 (X/Y → segments)
+  - Interpolate P2 speeds on P1 distance grid
+  - Segment color = p1_color if Speed1 >= Speed2 else p2_color
+  - Teammates handled by luminance adjustments
+- Returns ready-to-display Figure (caller displays with st.pyplot or saves with savefig).
+
+main() -> None
+- Orchestrates:
+  - CSS + header; session state defaults (mobile_view, units, aspect_ratio)
+  - Inputs: year, GP, session, driver mode (Specific/Teammates/P1vsP2)
+  - Data: load_session_data(); get_session_drivers_with_times()
+  - Selection logic:
+    * Specific → multiselect 2 drivers (code list built from driver_info)
+    * Teammates → team → pick first 2 matching codes
+    * P1 vs P2 → Session.results if available; else top-2 from driver_info
+  - If len(drivers_to_plot) == 2:
+    * prepare_driver_data()
+    * create_data_driven_lap_plot()
+    * st.pyplot() + highlights + download buttons (3 aspect ratios)
+- Error policy: prefer st.info/st.warning with fallbacks over hard failures.
+
+NOTES ON PERFORMANCE & CACHING
+- st.cache_resource (session object) vs st.cache_data (pure data): reduces reload time substantially.
+- FastF1 disk cache persists across runs; first load per session is slowest, then speeds up.
+
+EXTENSION IDEAS
+- Add panels: edit gridspec in create_data_driven_lap_plot.
+- More metrics: enrich generate_story_highlights with braking/gear-derived stats.
+- Extra units: update convert_speed_units and y-labels.
+- Branding: adjust TEAM_COLORS_MAPPING and CSS/title styling.
