@@ -1,0 +1,118 @@
+F1 DATA DRIVEN LAPS - NON-TECHNICAL GUIDE
+
+WHAT THIS APP DOES
+- Compare two Formula 1 drivers' fastest laps and show where each is faster on track.
+- Use official telemetry data (speed, position, distance) via the FastF1 library.
+- Automatically draw a clean, shareable visualization with a colored track, lap times, and a speed plot.
+
+HOW TO USE IT
+1) Pick a Year, then a Grand Prix, then a Session (for example, Qualifying).
+2) Choose how to select drivers:
+   - P1 vs P2: the two fastest drivers of the session
+   - Teammates: both drivers from the same team
+   - Specific Drivers: pick any two drivers from the session
+3) As soon as two drivers are selected, the visualization is generated automatically.
+4) Optional settings: Speed Units (km/h or mph) and Aspect Ratio (Story 9:16, Post 1:1, Widescreen 16:9).
+5) The watermark is fixed to @datadrivenlaps.
+6) Download high-resolution PNGs.
+
+BIG PICTURE: HOW IT WORKS
+- Streamlit: powers the user interface (the web app).
+- FastF1: loads session data and telemetry (drivers, lap times, speed, X/Y coordinates of the car, etc.).
+- Matplotlib: draws the figure with a title, track, speed panel, lap times, and footer.
+- Track coloring: each small segment is colored by who is faster at that location.
+- Highlights: simple auto-generated notes about where time is gained.
+
+CODE STRUCTURE (FILE: deployment_ready/app.py)
+- main(): The page entry point.
+  - Sets up the UI controls and layout.
+  - Loads the selected session (with caching for speed).
+  - Builds the driver list for the session.
+  - Auto-generates the plot when exactly two drivers are selected.
+
+- setup_environment():
+  - Configures plotting.
+  - Enables a local cache folder for FastF1 so repeated loads are much faster.
+
+- get_available_gps(year):
+  - Returns all Grand Prix names for the given year.
+
+- get_available_sessions(year, gp_name):
+  - Returns available sessions (Practice, Qualifying, Race, etc.) for the chosen Grand Prix.
+
+- load_session_data(year, gp_name, session_name):
+  - Loads the session data from FastF1 and returns a session object.
+
+- get_session_drivers_with_times(session):
+  - Collects session participants with their fastest lap time and team.
+  - Produces a simple list with: driver code (e.g., LEC), full name, team, formatted lap time, and a display color.
+  - Sorts by lap time so the fastest drivers come first.
+
+- prepare_driver_data(session, drivers_to_plot, mode):
+  - For each chosen driver, finds their fastest lap and gets telemetry (speed, X/Y track coordinates, etc.).
+  - Returns a compact data structure used by the plotting function.
+
+- create_data_driven_lap_plot(driver_data, session, drivers, year, gp, session_display, watermark_text, units, aspect_ratio):
+  - Builds the figure you see in the app.
+  - Title: YEAR GP SESSION.
+  - Track: draws the circuit and colors each segment by the faster driver at that point.
+  - Speed: plots both drivers' speeds (unit toggle supported).
+  - Lap times: shows each driver's fastest lap and the gap.
+  - Footer and watermark: displays a fixed @datadrivenlaps watermark.
+  - Returns the Matplotlib figure for display and download.
+
+- generate_story_highlights(p1_code, p2_code, p1_tel, p2_tel):
+  - Creates short, human-readable highlights from the telemetry comparison (e.g., where a driver gains time).
+
+- compute_time_delta_by_distance(p1_tel, p2_tel):
+  - Estimates the running time difference along the lap by aligning both drivers' data to the same distance scale.
+
+- convert_speed_units(series, units):
+  - Converts speed between km/h and mph for display.
+
+- get_team_color(driver_code, session, drivers_to_plot, is_secondary):
+  - Picks an appropriate color for each driver using team colors when possible.
+  - Slightly adjusts the second teammate's color for contrast.
+
+- adjust_color_luminance(color_hex, factor):
+  - Lightens or darkens a color to improve readability.
+
+- format_lap_time(seconds):
+  - Turns 71.270 into 1:11.270, etc.
+
+CONSTANTS AND MAPPINGS
+- TEAM_COLORS_MAPPING: Maps team names to recognizable colors.
+- DEFAULT_COLORS: Fallback colors if a team color is not available.
+
+DESIGN CHOICES THAT MATTER TO USERS
+- Auto-generate: No "Generate" button; plots appear once two drivers are selected.
+- Fixed watermark: Always shows "@datadrivenlaps" for consistent branding.
+- Friendly messages: If a session lacks data (common for very recent events), the app suggests trying another selection.
+- Mobile friendly: The layout and spacing are tuned for phones and desktops.
+
+OTHER USEFUL FILES
+- requirements.txt: The Python packages the app needs.
+- run_local.py: Helper script for running the app locally.
+- README.md: Feature overview and quick start.
+
+RELATED TOOLS (OUTSIDE THE APP)
+- scripts/interactive_f1_ghost_racing.py: Interactive/CLI generator that can produce PNG/GIF/MP4.
+- scripts/interactive_f1_ghost_racing_gui.py: Simple desktop GUI for the interactive generator.
+- scripts/multi_platform_uploader.py: Optional uploader for YouTube/Twitter/TikTok (requires extra setup).
+- outputs/: Folder used by the interactive tools for saving results.
+
+TROUBLESHOOTING (PLAIN ENGLISH)
+- Missing teams/drivers? Very recent sessions may be incomplete; try another session or wait.
+- Slow first load? Data is cached; later loads are faster.
+- Warnings about fonts/glyphs? Safe to ignore; the UI hides most of them.
+- Nothing happens? Make sure exactly two drivers are selected.
+
+SAFE WAYS TO CUSTOMIZE
+- Defaults: Change default year or aspect ratio in main() where session state defaults are set.
+- Colors: Update TEAM_COLORS_MAPPING if teams change branding.
+- Panels: Edit create_data_driven_lap_plot() to add/remove panels.
+
+REMEMBER THESE THREE THINGS
+1) main() wires the UI together and triggers the flow.
+2) FastF1 loads the session; prepare_driver_data() grabs each driver's fastest lap and telemetry.
+3) create_data_driven_lap_plot() draws everything you see.
