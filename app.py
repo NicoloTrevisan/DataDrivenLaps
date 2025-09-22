@@ -1209,10 +1209,10 @@ def main():
                         st.warning("Could not determine P1 vs P2")
             # Central animated outputs block under driver selection (desktop)
             st.markdown("---")
-            st.subheader("🎬 Animated Output (GIF - fast & compatible)")
-            st.caption("Generates an animated GIF (lighter and Streamlit-friendly). Output will appear next to the image.")
-            fast_mp4_fps = st.slider("GIF FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.")
-            gen_btn_center = st.button("🚀 Generate GIF", key='gen_anim_desktop')
+            st.subheader("🎬 Animated Output (Fast MP4)")
+            st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
+            fast_mp4_fps = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.")
+            gen_btn_center = st.button("🚀 Generate MP4", key='gen_anim_desktop')
             if gen_btn_center:
                 if len(drivers_to_plot) != 2:
                     st.info("Select exactly two drivers first.")
@@ -1223,10 +1223,10 @@ def main():
                         txt_area = debug_exp.empty()
                         try:
                             st.session_state['mp4_in_progress'] = True
-                            outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=True, make_mp4=False, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps)
-                            if outputs.get('gif_path'):
-                                st.session_state['latest_gif_path'] = outputs['gif_path']
-                                st.success(f"GIF created: {outputs['gif_path']}")
+                            outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=False, make_mp4=True, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps)
+                            if outputs.get('mp4_path'):
+                                st.session_state['latest_mp4_path'] = outputs['mp4_path']
+                                st.success(f"MP4 created: {outputs['mp4_path']}")
                             # If no outputs, let exceptions surface; don't show a premature 'no outputs' message
                         except Exception as e:
                             # Add to debug log
@@ -1308,10 +1308,10 @@ def main():
                     st.warning("Could not determine P1 vs P2")
         # Central animated outputs block for mobile under selection
         st.markdown("---")
-            st.subheader("🎬 Animated Output (GIF - fast & compatible)")
-            st.caption("Generates an animated GIF (lighter and Streamlit-friendly). Output will appear next to the image.")
-            fast_mp4_fps_m = st.slider("GIF FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.", key='mp4_fps_mobile')
-            gen_btn_center_m = st.button("🚀 Generate GIF", key='gen_anim_mobile')
+        st.subheader("🎬 Animated Output (Fast MP4)")
+        st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
+        fast_mp4_fps_m = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.", key='mp4_fps_mobile')
+        gen_btn_center_m = st.button("🚀 Generate MP4", key='gen_anim_mobile')
         if gen_btn_center_m:
             if len(drivers_to_plot) != 2:
                 st.info("Select exactly two drivers first.")
@@ -1322,10 +1322,10 @@ def main():
                     txt_area = debug_exp.empty()
                     try:
                         st.session_state['mp4_in_progress'] = True
-                        outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=True, make_mp4=False, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps_m)
-                        if outputs.get('gif_path'):
-                            st.session_state['latest_gif_path'] = outputs['gif_path']
-                            st.success(f"GIF created: {outputs['gif_path']}")
+                        outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=False, make_mp4=True, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps_m)
+                        if outputs.get('mp4_path'):
+                            st.session_state['latest_mp4_path'] = outputs['mp4_path']
+                            st.success(f"MP4 created: {outputs['mp4_path']}")
                         # If no outputs, let exceptions surface; don't show a premature 'no outputs' message
                     except Exception as e:
                         # Add to debug log
@@ -1365,9 +1365,13 @@ def main():
                 units=st.session_state.get('units', 'km/h'),
                 aspect_ratio=st.session_state.get('aspect_ratio', 'Story 9:16')
             )
-            # Decide layout: centered image normally; two columns if MP4 generating or available
-            mp4_active = st.session_state.get('mp4_in_progress', False) or bool(st.session_state.get('latest_mp4_path'))
-            if mp4_active:
+            # Decide layout: centered image normally; two columns if media generating or available (MP4 or GIF)
+            media_active = (
+                st.session_state.get('mp4_in_progress', False)
+                or bool(st.session_state.get('latest_mp4_path'))
+                or bool(st.session_state.get('latest_gif_path'))
+            )
+            if media_active:
                 col_left, col_right = st.columns([1, 1])
                 with col_left:
                     st.subheader("Lap visualization")
@@ -1413,23 +1417,33 @@ def main():
 
             plt.close(fig)
 
-            # If we have a recent MP4, show it aligned with the image and add download button in Download section
-            if st.session_state.get('latest_mp4_path'):
-                # Place the video at the same vertical height as the image by rendering in the right column when present
+            # If we have a recent media (MP4 or GIF), show it aligned with the image and add download button in Download section
+            if st.session_state.get('latest_mp4_path') or st.session_state.get('latest_gif_path'):
                 try:
                     if 'col_right' in locals():
                         with col_right:
-                            st.subheader("Lap movie")
-                            with open(st.session_state['latest_mp4_path'], 'rb') as f:
-                                st.video(f.read())
+                            if st.session_state.get('latest_mp4_path'):
+                                st.subheader("Lap movie")
+                                with open(st.session_state['latest_mp4_path'], 'rb') as f:
+                                    st.video(f.read())
+                            elif st.session_state.get('latest_gif_path'):
+                                st.subheader("Lap movie (GIF)")
+                                with open(st.session_state['latest_gif_path'], 'rb') as f:
+                                    st.image(f.read())
                 except Exception:
                     pass
 
-            # MP4 download button in the main Download section (only when available)
+            # Media download buttons in the main Download section (only when available)
             if st.session_state.get('latest_mp4_path'):
                 try:
                     with open(st.session_state['latest_mp4_path'], 'rb') as f:
                         st.download_button("Download MP4", data=f, file_name=Path(st.session_state['latest_mp4_path']).name, mime="video/mp4", key='dl_mp4_main')
+                except Exception:
+                    pass
+            if st.session_state.get('latest_gif_path'):
+                try:
+                    with open(st.session_state['latest_gif_path'], 'rb') as f:
+                        st.download_button("Download GIF", data=f, file_name=Path(st.session_state['latest_gif_path']).name, mime="image/gif", key='dl_gif_main')
                 except Exception:
                     pass
 
