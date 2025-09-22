@@ -885,54 +885,27 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                 _log(f"Creating MP4 at {int(mp4_fps)} FPS...")
                 _log(f"Output directory will be: {os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'outputs', 'MP4s')}")
                 
-                # Check if FFmpeg is available and try to install if not
-                def check_and_install_ffmpeg():
-                    import subprocess
-                    import shutil
-                    
-                    # Check if ffmpeg is already available
-                    if shutil.which('ffmpeg'):
-                        _log("FFmpeg is already available")
-                        return True
-                    
-                    _log("FFmpeg not found, attempting to install via apt...")
-                    try:
-                        # Try to install ffmpeg (this might work on some cloud platforms)
-                        result = subprocess.run(['apt', 'update'], capture_output=True, text=True, timeout=30)
-                        if result.returncode == 0:
-                            result = subprocess.run(['apt', 'install', '-y', 'ffmpeg'], capture_output=True, text=True, timeout=120)
-                            if result.returncode == 0:
-                                _log("FFmpeg installed successfully")
-                                return True
-                        _log(f"FFmpeg installation failed: {result.stderr}")
-                    except Exception as e:
-                        _log(f"FFmpeg installation attempt failed: {e}")
-                    
-                    return False
-                
-                # Try to ensure FFmpeg is available
-                ffmpeg_available = check_and_install_ffmpeg()
+                # Simple FFmpeg check without installation attempt
+                import shutil
+                ffmpeg_available = shutil.which('ffmpeg') is not None
+                _log(f"FFmpeg available: {ffmpeg_available}")
                 
                 # Set default values
                 writer_class = if1.FFMpegWriter
                 output_extension = 'mp4'
                 writer_options = {'bitrate': 6000}
                 
-                # Check if FFMpegWriter is available
-                try:
-                    test_writer = if1.FFMpegWriter(fps=int(mp4_fps))
-                    _log("FFMpegWriter initialized successfully")
-                except Exception as e:
-                    _log(f"FFMpegWriter initialization failed: {e}")
-                    if not ffmpeg_available:
-                        _log("Falling back to GIF generation since FFmpeg is not available")
-                        # Change to PillowWriter for GIF
-                        writer_class = if1.PillowWriter
-                        output_extension = 'gif'
-                        writer_options = {}  # PillowWriter doesn't use bitrate
-                        _log("Switched to GIF output using PillowWriter")
-                    else:
-                        raise
+                # Skip FFmpeg and use PillowWriter for GIF on Streamlit Cloud
+                if not ffmpeg_available:
+                    _log("FFmpeg not available, using PillowWriter for GIF")
+                    writer_class = if1.PillowWriter
+                    output_extension = 'gif'
+                    writer_options = {}
+                    # Reduce FPS for better performance on limited resources
+                    mp4_fps = min(mp4_fps, 10)
+                    _log(f"Reduced FPS to {mp4_fps} for better performance")
+                else:
+                    _log("FFmpeg available, proceeding with MP4")
                 
                 # Create a safe temporary directory for output
                 import tempfile
@@ -948,12 +921,25 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                     if not gen.animation_frame_data or len(gen.animation_frame_data) < 2:
                         _log(f"❌ Animation data not ready for {output_extension.upper()}.")
                         return None
+                    
+                    # Limit animation duration for Streamlit Cloud resources
+                    max_duration = 60  # 60 seconds max
+                    actual_duration = min(gen.animation_duration, max_duration)
+                    if actual_duration < gen.animation_duration:
+                        _log(f"Limiting animation duration to {actual_duration}s (was {gen.animation_duration:.1f}s) for performance")
                         
                     fig = gen._create_plot_layout() 
-                    static_end_seconds = 3
+                    static_end_seconds = 2  # Reduce static time
                     static_frames = static_end_seconds * output_fps
-                    live_duration_output_frames = int(gen.animation_duration * output_fps)
+                    live_duration_output_frames = int(actual_duration * output_fps)
                     total_output_video_frames = live_duration_output_frames + static_frames
+                    
+                    # Safety check for frame count
+                    max_frames = 1000  # Limit total frames
+                    if total_output_video_frames > max_frames:
+                        _log(f"Reducing frame count from {total_output_video_frames} to {max_frames} for performance")
+                        live_duration_output_frames = max_frames - static_frames
+                        total_output_video_frames = max_frames
 
                     # Map output frames to the master animation_total_frames (source 60FPS data)
                     source_data_indices = np.linspace(0, gen.animation_total_frames - 1, live_duration_output_frames, endpoint=True).astype(int)
