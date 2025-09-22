@@ -861,16 +861,16 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
         stdout_buf = io.StringIO()
         with contextlib.redirect_stdout(stdout_buf):
             if not gen.load_session_data():
-            _log("Failed to load session data")
-            raise RuntimeError('Failed to load session data for animation.')
+                _log("Failed to load session data")
+                raise RuntimeError('Failed to load session data for animation.')
             _log("Preparing driver data...")
             if not gen.prepare_driver_data():
-            _log("Failed to prepare driver data")
-            raise RuntimeError('Failed to prepare driver data for animation.')
+                _log("Failed to prepare driver data")
+                raise RuntimeError('Failed to prepare driver data for animation.')
             _log("Preparing animation frames...")
             if not gen.prepare_cinematic_animation_data():
-            _log("Failed to prepare animation frames")
-            raise RuntimeError('Failed to prepare animation frames.')
+                _log("Failed to prepare animation frames")
+                raise RuntimeError('Failed to prepare animation frames.')
             _log("Calculating sector times...")
             gen.calculate_sector_times()
 
