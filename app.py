@@ -1209,10 +1209,10 @@ def main():
                         st.warning("Could not determine P1 vs P2")
             # Central animated outputs block under driver selection (desktop)
             st.markdown("---")
-            st.subheader("🎬 Animated Output (Fast MP4)")
-            st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
-            fast_mp4_fps = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.")
-            gen_btn_center = st.button("🚀 Generate MP4", key='gen_anim_desktop')
+            st.subheader("🎬 Animated Output (GIF - fast & compatible)")
+            st.caption("Generates an animated GIF (lighter and Streamlit-friendly). Output will appear next to the image.")
+            fast_mp4_fps = st.slider("GIF FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.")
+            gen_btn_center = st.button("🚀 Generate GIF", key='gen_anim_desktop')
             if gen_btn_center:
                 if len(drivers_to_plot) != 2:
                     st.info("Select exactly two drivers first.")
@@ -1223,10 +1223,10 @@ def main():
                         txt_area = debug_exp.empty()
                         try:
                             st.session_state['mp4_in_progress'] = True
-                            outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=False, make_mp4=True, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps)
-                            if outputs.get('mp4_path'):
-                                st.session_state['latest_mp4_path'] = outputs['mp4_path']
-                                st.success(f"MP4 created: {outputs['mp4_path']}")
+                            outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=True, make_mp4=False, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps)
+                            if outputs.get('gif_path'):
+                                st.session_state['latest_gif_path'] = outputs['gif_path']
+                                st.success(f"GIF created: {outputs['gif_path']}")
                             # If no outputs, let exceptions surface; don't show a premature 'no outputs' message
                         except Exception as e:
                             # Add to debug log
@@ -1308,10 +1308,10 @@ def main():
                     st.warning("Could not determine P1 vs P2")
         # Central animated outputs block for mobile under selection
         st.markdown("---")
-        st.subheader("🎬 Animated Output (Fast MP4)")
-        st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
-        fast_mp4_fps_m = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.", key='mp4_fps_mobile')
-        gen_btn_center_m = st.button("🚀 Generate MP4", key='gen_anim_mobile')
+            st.subheader("🎬 Animated Output (GIF - fast & compatible)")
+            st.caption("Generates an animated GIF (lighter and Streamlit-friendly). Output will appear next to the image.")
+            fast_mp4_fps_m = st.slider("GIF FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.", key='mp4_fps_mobile')
+            gen_btn_center_m = st.button("🚀 Generate GIF", key='gen_anim_mobile')
         if gen_btn_center_m:
             if len(drivers_to_plot) != 2:
                 st.info("Select exactly two drivers first.")
@@ -1322,10 +1322,10 @@ def main():
                     txt_area = debug_exp.empty()
                     try:
                         st.session_state['mp4_in_progress'] = True
-                        outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=False, make_mp4=True, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps_m)
-                        if outputs.get('mp4_path'):
-                            st.session_state['latest_mp4_path'] = outputs['mp4_path']
-                            st.success(f"MP4 created: {outputs['mp4_path']}")
+                        outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=True, make_mp4=False, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps_m)
+                        if outputs.get('gif_path'):
+                            st.session_state['latest_gif_path'] = outputs['gif_path']
+                            st.success(f"GIF created: {outputs['gif_path']}")
                         # If no outputs, let exceptions surface; don't show a premature 'no outputs' message
                     except Exception as e:
                         # Add to debug log
