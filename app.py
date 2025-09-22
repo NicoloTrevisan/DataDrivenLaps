@@ -28,6 +28,7 @@ import warnings
 import sys
 import importlib.util
 import importlib.machinery
+import contextlib
 
 # Page configuration
 st.set_page_config(
@@ -769,6 +770,20 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
     """
     results: dict = {}
     try:
+        log_entries = []
+        def _log(msg: str):
+            log_entries.append(msg)
+            # Add to persistent debug log
+            if 'debug_log' not in st.session_state:
+                st.session_state.debug_log = []
+            st.session_state.debug_log.append(f"[MP4 Gen] {msg}")
+            
+            if text_placeholder is not None:
+                # Update a single terminal-like block
+                try:
+                    text_placeholder.code("\n".join(log_entries))
+                except Exception:
+                    text_placeholder.write(msg)
         # Try multiple locations to import the generator module
         if1 = None
         module_name = 'interactive_f1_ghost_racing'
@@ -785,8 +800,10 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
             return mod
 
         if candidate1.exists():
+            _log(f"Using local module: {candidate1}")
             if1 = _load_module_from_path(module_name, candidate1)
         elif candidate2.exists():
+            _log(f"Using repo scripts module: {candidate2}")
             if1 = _load_module_from_path(module_name, candidate2)
         else:
             # Last attempt: sys.path import if repository layout is available at runtime
@@ -795,6 +812,7 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                 if str(scripts_dir) not in sys.path:
                     sys.path.append(str(scripts_dir))
                 import interactive_f1_ghost_racing as if1  # type: ignore
+                _log("Imported interactive_f1_ghost_racing via sys.path")
             except Exception as _e:
                 raise ImportError("Could not locate interactive_f1_ghost_racing.py. Ensure 'scripts/' is deployed alongside the app or copy the file into 'deployment_ready/'.")
 
@@ -839,13 +857,22 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
         gen.drivers_to_plot = [drivers_to_plot[0], drivers_to_plot[1]]
 
         # Load and prepare data
-        if not gen.load_session_data():
+        _log("Loading session data...")
+        stdout_buf = io.StringIO()
+        with contextlib.redirect_stdout(stdout_buf):
+            if not gen.load_session_data():
+            _log("Failed to load session data")
             raise RuntimeError('Failed to load session data for animation.')
-        if not gen.prepare_driver_data():
+            _log("Preparing driver data...")
+            if not gen.prepare_driver_data():
+            _log("Failed to prepare driver data")
             raise RuntimeError('Failed to prepare driver data for animation.')
-        if not gen.prepare_cinematic_animation_data():
+            _log("Preparing animation frames...")
+            if not gen.prepare_cinematic_animation_data():
+            _log("Failed to prepare animation frames")
             raise RuntimeError('Failed to prepare animation frames.')
-        gen.calculate_sector_times()
+            _log("Calculating sector times...")
+            gen.calculate_sector_times()
 
         # Generate outputs
         if make_gif:
@@ -855,16 +882,48 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
         if make_mp4:
             # Fast path: call the internal animation with custom FPS (lower = faster)
             try:
+                _log(f"Creating MP4 at {int(mp4_fps)} FPS...")
                 mp4_path = gen._create_animation(output_fps=int(mp4_fps), output_extension='mp4', writer_class=if1.FFMpegWriter, writer_options={'bitrate': 6000})
             except Exception:
                 # Fallback to default 60 FPS method if internal call signature changes
+                _log("Fast MP4 path failed, falling back to default method (60 FPS)...")
                 mp4_path = gen.create_mp4()
             if mp4_path:
                 results['mp4_path'] = mp4_path
+            else:
+                _log("MP4 generation returned no path (None)")
+                raise RuntimeError('MP4 generation returned no file path (None).')
+        results['stdout'] = stdout_buf.getvalue()
+        # Persist logs to file
+        try:
+            outputs_dir = Path(tempfile.gettempdir()) / 'ddlaps_logs'
+            outputs_dir.mkdir(parents=True, exist_ok=True)
+            log_path = outputs_dir / f"animation_{year}_{gp_name.replace(' ','_')}_{drivers_to_plot[0]}_vs_{drivers_to_plot[1]}.log"
+            log_path.write_text("\n".join(log_entries) + "\n\nSTDOUT:\n" + results.get('stdout',''))
+            results['log_path'] = str(log_path)
+        except Exception:
+            pass
+        results['log_text'] = "\n".join(log_entries)
         return results
     except Exception as e:
-        # Surface a friendly error up the stack
-        raise Exception(f"Animated output generation failed: {e}")
+        # Try to persist what we have from this scope
+        try:
+            outputs_dir = Path(tempfile.gettempdir()) / 'ddlaps_logs'
+            outputs_dir.mkdir(parents=True, exist_ok=True)
+            log_path = outputs_dir / f"animation_error_{year}_{gp_name.replace(' ','_')}_{drivers_to_plot[0]}_vs_{drivers_to_plot[1]}.log"
+            try:
+                captured = stdout_buf.getvalue()
+            except Exception:
+                captured = ''
+            try:
+                log_text = "\n".join(log_entries)
+            except Exception:
+                log_text = ''
+            log_path.write_text(log_text + "\n\nSTDOUT:\n" + captured)
+            raise Exception(f"Animated output generation failed: {e} | Log saved to {log_path}")
+        except Exception:
+            # Surface a friendly error up the stack
+            raise Exception(f"Animated output generation failed: {e}")
 
 # Main App Layout
 def main():
@@ -1035,17 +1094,21 @@ def main():
                     st.info("Select exactly two drivers first.")
                 else:
                     with st.spinner("Generating animated outputs. This can take several minutes, please wait..."):
-                        prog_area = st.empty()
-                        txt_area = st.empty()
+                        debug_exp = st.expander("Debug console", expanded=True)
+                        prog_area = debug_exp.progress(0)
+                        txt_area = debug_exp.empty()
                         try:
                             st.session_state['mp4_in_progress'] = True
                             outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=False, make_mp4=True, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps)
                             if outputs.get('mp4_path'):
                                 st.session_state['latest_mp4_path'] = outputs['mp4_path']
                                 st.success(f"MP4 created: {outputs['mp4_path']}")
-                            if not outputs:
-                                st.info("No animated outputs were generated.")
+                            # If no outputs, let exceptions surface; don't show a premature 'no outputs' message
                         except Exception as e:
+                            # Add to debug log
+                            if 'debug_log' not in st.session_state:
+                                st.session_state.debug_log = []
+                            st.session_state.debug_log.append(f"[ERROR] Desktop MP4 Generation failed: {str(e)}")
                             st.info(str(e))
                         finally:
                             st.session_state['mp4_in_progress'] = False
@@ -1130,17 +1193,21 @@ def main():
                 st.info("Select exactly two drivers first.")
             else:
                 with st.spinner("Generating animated outputs. This can take several minutes, please wait..."):
-                    prog_area = st.empty()
-                    txt_area = st.empty()
+                    debug_exp = st.expander("Debug console", expanded=True)
+                    prog_area = debug_exp.progress(0)
+                    txt_area = debug_exp.empty()
                     try:
                         st.session_state['mp4_in_progress'] = True
                         outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=False, make_mp4=True, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps_m)
                         if outputs.get('mp4_path'):
                             st.session_state['latest_mp4_path'] = outputs['mp4_path']
                             st.success(f"MP4 created: {outputs['mp4_path']}")
-                        if not outputs:
-                            st.info("No animated outputs were generated.")
+                        # If no outputs, let exceptions surface; don't show a premature 'no outputs' message
                     except Exception as e:
+                        # Add to debug log
+                        if 'debug_log' not in st.session_state:
+                            st.session_state.debug_log = []
+                        st.session_state.debug_log.append(f"[ERROR] Mobile MP4 Generation failed: {str(e)}")
                         st.info(str(e))
                     finally:
                         st.session_state['mp4_in_progress'] = False
@@ -1252,6 +1319,7 @@ def main():
                     with st.spinner("Generating animated outputs. This can take several minutes, please wait..."):
                         prog_area = st.empty()
                         txt_area = st.empty()
+                        st.caption("Logs:")
                         try:
                             outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif, make_mp4, progress_placeholder=prog_area, text_placeholder=txt_area)
                             if outputs.get('gif_path'):
@@ -1270,6 +1338,36 @@ def main():
             st.info("Something went wrong while generating the visualization. Please try again.")
     else:
         st.caption("Select exactly two drivers to generate a data-driven lap image.")
+    
+    # Persistent Debug Console at bottom
+    st.markdown("---")
+    st.subheader("🔧 Debug Console")
+    
+    # Initialize debug log in session state
+    if 'debug_log' not in st.session_state:
+        st.session_state.debug_log = []
+    
+    # Add current status to debug log
+    current_status = []
+    current_status.append(f"Session loaded: {st.session_state.get('session_loaded', False)}")
+    current_status.append(f"Drivers selected: {len(drivers_to_plot) if 'drivers_to_plot' in locals() else 0}")
+    current_status.append(f"MP4 in progress: {st.session_state.get('mp4_in_progress', False)}")
+    current_status.append(f"Latest MP4 path: {st.session_state.get('latest_mp4_path', 'None')}")
+    
+    # Show debug info
+    with st.expander("Live Debug Info", expanded=False):
+        st.text("Current Status:")
+        for status in current_status:
+            st.text(f"  • {status}")
+        
+        if st.session_state.debug_log:
+            st.text("\nRecent Debug Messages:")
+            for i, log_entry in enumerate(st.session_state.debug_log[-10:]):  # Show last 10 entries
+                st.text(f"  {i+1}. {log_entry}")
+        
+        if st.button("Clear Debug Log"):
+            st.session_state.debug_log = []
+            st.rerun()
     
     # Footer
     st.markdown("---")
