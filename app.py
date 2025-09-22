@@ -885,13 +885,54 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                 _log(f"Creating MP4 at {int(mp4_fps)} FPS...")
                 _log(f"Output directory will be: {os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'outputs', 'MP4s')}")
                 
+                # Check if FFmpeg is available and try to install if not
+                def check_and_install_ffmpeg():
+                    import subprocess
+                    import shutil
+                    
+                    # Check if ffmpeg is already available
+                    if shutil.which('ffmpeg'):
+                        _log("FFmpeg is already available")
+                        return True
+                    
+                    _log("FFmpeg not found, attempting to install via apt...")
+                    try:
+                        # Try to install ffmpeg (this might work on some cloud platforms)
+                        result = subprocess.run(['apt', 'update'], capture_output=True, text=True, timeout=30)
+                        if result.returncode == 0:
+                            result = subprocess.run(['apt', 'install', '-y', 'ffmpeg'], capture_output=True, text=True, timeout=120)
+                            if result.returncode == 0:
+                                _log("FFmpeg installed successfully")
+                                return True
+                        _log(f"FFmpeg installation failed: {result.stderr}")
+                    except Exception as e:
+                        _log(f"FFmpeg installation attempt failed: {e}")
+                    
+                    return False
+                
+                # Try to ensure FFmpeg is available
+                ffmpeg_available = check_and_install_ffmpeg()
+                
+                # Set default values
+                writer_class = if1.FFMpegWriter
+                output_extension = 'mp4'
+                writer_options = {'bitrate': 6000}
+                
                 # Check if FFMpegWriter is available
                 try:
                     test_writer = if1.FFMpegWriter(fps=int(mp4_fps))
                     _log("FFMpegWriter initialized successfully")
                 except Exception as e:
                     _log(f"FFMpegWriter initialization failed: {e}")
-                    raise
+                    if not ffmpeg_available:
+                        _log("Falling back to GIF generation since FFmpeg is not available")
+                        # Change to PillowWriter for GIF
+                        writer_class = if1.PillowWriter
+                        output_extension = 'gif'
+                        writer_options = {}  # PillowWriter doesn't use bitrate
+                        _log("Switched to GIF output using PillowWriter")
+                    else:
+                        raise
                 
                 # Create a safe temporary directory for output
                 import tempfile
@@ -954,12 +995,27 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                     except Exception as e_anim:
                         progress_bar_anim.close()
                         _log(f"❌ {output_extension.upper()} creation failed: {e_anim}")
+                        
+                        # If FFmpeg failed, try PillowWriter as fallback for MP4->GIF
+                        if output_extension == 'mp4' and 'ffmpeg' in str(e_anim).lower():
+                            _log("FFmpeg not available, trying PillowWriter for GIF as fallback...")
+                            gif_path = full_path_output.replace('.mp4', '.gif')
+                            try:
+                                pillow_writer = if1.PillowWriter(fps=min(output_fps, 20))  # Limit GIF FPS
+                                anim_obj.save(gif_path, writer=pillow_writer,
+                                            savefig_kwargs={'bbox_inches': 'tight', 'pad_inches': 0.1, 'facecolor': '#000000'})
+                                _log(f"✅ GIF fallback saved: {gif_path} ({os.path.getsize(gif_path)/(1024*1024):.1f} MB)")
+                                return gif_path
+                            except Exception as e_gif:
+                                _log(f"❌ GIF fallback also failed: {e_gif}")
+                        
                         return None
                     finally:
                         plt.close(fig)
                 
-                mp4_path = patched_create_animation(output_fps=int(mp4_fps), output_extension='mp4', writer_class=if1.FFMpegWriter, writer_options={'bitrate': 6000})
-                _log(f"MP4 creation returned: {mp4_path}")
+                output_path = patched_create_animation(output_fps=int(mp4_fps), output_extension=output_extension, writer_class=writer_class, writer_options=writer_options)
+                _log(f"{output_extension.upper()} creation returned: {output_path}")
+                mp4_path = output_path  # Keep variable name for compatibility
             except Exception as e:
                 # Fallback to default 60 FPS method if internal call signature changes
                 _log(f"Fast MP4 path failed with error: {e}")
