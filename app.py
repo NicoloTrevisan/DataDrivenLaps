@@ -883,11 +883,28 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
             # Fast path: call the internal animation with custom FPS (lower = faster)
             try:
                 _log(f"Creating MP4 at {int(mp4_fps)} FPS...")
+                _log(f"Output directory will be: {os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'outputs', 'MP4s')}")
+                
+                # Check if FFMpegWriter is available
+                try:
+                    test_writer = if1.FFMpegWriter(fps=int(mp4_fps))
+                    _log("FFMpegWriter initialized successfully")
+                except Exception as e:
+                    _log(f"FFMpegWriter initialization failed: {e}")
+                    raise
+                
                 mp4_path = gen._create_animation(output_fps=int(mp4_fps), output_extension='mp4', writer_class=if1.FFMpegWriter, writer_options={'bitrate': 6000})
-            except Exception:
+                _log(f"MP4 creation returned: {mp4_path}")
+            except Exception as e:
                 # Fallback to default 60 FPS method if internal call signature changes
-                _log("Fast MP4 path failed, falling back to default method (60 FPS)...")
-                mp4_path = gen.create_mp4()
+                _log(f"Fast MP4 path failed with error: {e}")
+                _log("Falling back to default method (60 FPS)...")
+                try:
+                    mp4_path = gen.create_mp4()
+                    _log(f"Default MP4 creation returned: {mp4_path}")
+                except Exception as e2:
+                    _log(f"Default MP4 creation also failed: {e2}")
+                    mp4_path = None
             if mp4_path:
                 results['mp4_path'] = mp4_path
             else:
