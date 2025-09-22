@@ -893,7 +893,72 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                     _log(f"FFMpegWriter initialization failed: {e}")
                     raise
                 
-                mp4_path = gen._create_animation(output_fps=int(mp4_fps), output_extension='mp4', writer_class=if1.FFMpegWriter, writer_options={'bitrate': 6000})
+                # Create a safe temporary directory for output
+                import tempfile
+                import numpy as np
+                import matplotlib.pyplot as plt
+                temp_dir = tempfile.mkdtemp()
+                _log(f"Using temporary directory: {temp_dir}")
+                
+                # Override the generator's output directory calculation
+                original_create_animation = gen._create_animation
+                def patched_create_animation(output_fps, output_extension, writer_class, writer_options=None):
+                    # Copy the original method but use our temp directory
+                    if not gen.animation_frame_data or len(gen.animation_frame_data) < 2:
+                        _log(f"❌ Animation data not ready for {output_extension.upper()}.")
+                        return None
+                        
+                    fig = gen._create_plot_layout() 
+                    static_end_seconds = 3
+                    static_frames = static_end_seconds * output_fps
+                    live_duration_output_frames = int(gen.animation_duration * output_fps)
+                    total_output_video_frames = live_duration_output_frames + static_frames
+
+                    # Map output frames to the master animation_total_frames (source 60FPS data)
+                    source_data_indices = np.linspace(0, gen.animation_total_frames - 1, live_duration_output_frames, endpoint=True).astype(int)
+                    last_live_source_data_idx = gen.animation_total_frames - 1
+                    source_data_indices_incl_static = np.concatenate([
+                        source_data_indices,
+                        np.full(static_frames, last_live_source_data_idx, dtype=int)
+                    ])
+                    
+                    time_points_for_display_output = np.concatenate([
+                        np.linspace(0, gen.animation_duration, live_duration_output_frames, endpoint=True),
+                        np.full(static_frames, gen.animation_duration)
+                    ])
+
+                    desc = f"{output_extension.upper()} Rendering"
+                    progress_bar_anim = if1.ProgressBar(total=total_output_video_frames, desc=desc)
+
+                    def animate_single_frame(output_frame_idx_iterator):
+                        current_source_data_idx = source_data_indices_incl_static[output_frame_idx_iterator]
+                        current_display_time_for_timer = time_points_for_display_output[output_frame_idx_iterator]
+                        updated_artists_tuple = gen._update_frame_elements(current_source_data_idx, current_display_time_for_timer)
+                        progress_bar_anim.update()
+                        return updated_artists_tuple
+
+                    anim_obj = if1.FuncAnimation(fig, animate_single_frame, frames=total_output_video_frames, 
+                                                 interval=1000/output_fps, blit=True, repeat=False)
+
+                    filename_base = f"{gen.year}_{gen.gp_name.replace(' ', '_').replace('-','_')}_{gen.session_name}_{gen.p1_code}_vs_{gen.p2_code}"
+                    full_path_output = os.path.join(temp_dir, f"{filename_base}.{output_extension}")
+                    _log(f"Saving to: {full_path_output}")
+
+                    try:
+                        writer_obj = writer_class(fps=output_fps, **(writer_options or {}))
+                        anim_obj.save(full_path_output, writer=writer_obj, 
+                                     savefig_kwargs={'bbox_inches': 'tight', 'pad_inches': 0.1, 'facecolor': '#000000'})
+                        progress_bar_anim.close()
+                        _log(f"✅ {output_extension.upper()} saved: {full_path_output} ({os.path.getsize(full_path_output)/(1024*1024):.1f} MB)")
+                        return full_path_output
+                    except Exception as e_anim:
+                        progress_bar_anim.close()
+                        _log(f"❌ {output_extension.upper()} creation failed: {e_anim}")
+                        return None
+                    finally:
+                        plt.close(fig)
+                
+                mp4_path = patched_create_animation(output_fps=int(mp4_fps), output_extension='mp4', writer_class=if1.FFMpegWriter, writer_options={'bitrate': 6000})
                 _log(f"MP4 creation returned: {mp4_path}")
             except Exception as e:
                 # Fallback to default 60 FPS method if internal call signature changes
