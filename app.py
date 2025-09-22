@@ -26,6 +26,8 @@ import io
 import base64
 import warnings
 import sys
+import importlib.util
+import importlib.machinery
 
 # Page configuration
 st.set_page_config(
@@ -767,12 +769,34 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
     """
     results: dict = {}
     try:
-        # Ensure we can import the generator class from ../scripts
-        scripts_dir = Path(__file__).resolve().parents[1] / 'scripts'
-        if str(scripts_dir) not in sys.path:
-            sys.path.append(str(scripts_dir))
+        # Try multiple locations to import the generator module
+        if1 = None
+        module_name = 'interactive_f1_ghost_racing'
+        # First: sibling file inside deployment_ready (if present)
+        candidate1 = Path(__file__).resolve().parent / f'{module_name}.py'
+        # Second: repo-level scripts directory
+        candidate2 = Path(__file__).resolve().parents[1] / 'scripts' / f'{module_name}.py'
 
-        import interactive_f1_ghost_racing as if1  # type: ignore
+        def _load_module_from_path(name, path):
+            loader = importlib.machinery.SourceFileLoader(name, str(path))
+            spec = importlib.util.spec_from_loader(loader.name, loader)
+            mod = importlib.util.module_from_spec(spec)
+            loader.exec_module(mod)  # type: ignore
+            return mod
+
+        if candidate1.exists():
+            if1 = _load_module_from_path(module_name, candidate1)
+        elif candidate2.exists():
+            if1 = _load_module_from_path(module_name, candidate2)
+        else:
+            # Last attempt: sys.path import if repository layout is available at runtime
+            try:
+                scripts_dir = Path(__file__).resolve().parents[1] / 'scripts'
+                if str(scripts_dir) not in sys.path:
+                    sys.path.append(str(scripts_dir))
+                import interactive_f1_ghost_racing as if1  # type: ignore
+            except Exception as _e:
+                raise ImportError("Could not locate interactive_f1_ghost_racing.py. Ensure 'scripts/' is deployed alongside the app or copy the file into 'deployment_ready/'.")
 
         # Create a Streamlit-backed progress bar proxy to replace the module's ProgressBar
         class _StreamlitProgressBar:
