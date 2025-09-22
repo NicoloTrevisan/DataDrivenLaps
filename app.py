@@ -25,6 +25,7 @@ from pathlib import Path
 import io
 import base64
 import warnings
+import sys
 
 # Page configuration
 st.set_page_config(
@@ -746,6 +747,101 @@ def create_data_driven_lap_plot(driver_data_dict, _session, drivers_to_plot, yea
             alpha=0.7, ha='right', va='top', fontweight='bold', transform=fig.transFigure, rotation=0)
     return fig
 
+# --- Optional animated outputs (GIF/MP4) integration ---
+def _map_session_display_to_code(session_display: str) -> str:
+    """Map human-readable session names to FastF1 short codes used in the animation generator."""
+    mapping = {
+        'Practice 1': 'FP1',
+        'Practice 2': 'FP2',
+        'Practice 3': 'FP3',
+        'Qualifying': 'Q',
+        'Race': 'R',
+        'Sprint Qualifying': 'SQ',
+        'Sprint': 'SR'
+    }
+    return mapping.get(session_display, session_display)
+
+def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, drivers_to_plot: list, make_gif: bool, make_mp4: bool, progress_placeholder=None, text_placeholder=None, mp4_fps: int = 10) -> dict:
+    """Use scripts/interactive_f1_ghost_racing.py to create GIF/MP4 for the current selection.
+    Returns dict with optional keys 'gif_path' and 'mp4_path'.
+    """
+    results: dict = {}
+    try:
+        # Ensure we can import the generator class from ../scripts
+        scripts_dir = Path(__file__).resolve().parents[1] / 'scripts'
+        if str(scripts_dir) not in sys.path:
+            sys.path.append(str(scripts_dir))
+
+        import interactive_f1_ghost_racing as if1  # type: ignore
+
+        # Create a Streamlit-backed progress bar proxy to replace the module's ProgressBar
+        class _StreamlitProgressBar:
+            def __init__(self, total: int, desc: str = "Progress"):
+                self.total = max(1, int(total))
+                self.current = 0
+                self.desc = desc
+                self._prog = None
+                self._txt = None
+                if progress_placeholder is not None:
+                    self._prog = progress_placeholder.progress(0)
+                if text_placeholder is not None:
+                    self._txt = text_placeholder
+                    self._txt.write(f"{self.desc}: 0% (0/{self.total})")
+
+            def update(self, n: int = 1):
+                self.current = min(self.total, self.current + n)
+                percent = int(self.current * 100 / self.total)
+                if self._prog is not None:
+                    self._prog.progress(percent)
+                if self._txt is not None:
+                    self._txt.write(f"{self.desc}: {percent}% ({self.current}/{self.total})")
+
+            def close(self):
+                if self._prog is not None:
+                    self._prog.progress(100)
+                if self._txt is not None:
+                    self._txt.write(f"{self.desc}: 100% ({self.total}/{self.total})")
+
+        # Swap the generator's ProgressBar with our Streamlit proxy
+        if1.ProgressBar = _StreamlitProgressBar
+        from interactive_f1_ghost_racing import InteractiveDataDrivenLaps  # type: ignore
+
+        gen = InteractiveDataDrivenLaps()
+        gen.year = int(year)
+        gen.gp_name = gp_name
+        gen.session_name = _map_session_display_to_code(session_display)
+        # Force specific drivers mode using the two selected abbreviations
+        gen.driver_selection_mode = 'SpecificDrivers'
+        gen.drivers_to_plot = [drivers_to_plot[0], drivers_to_plot[1]]
+
+        # Load and prepare data
+        if not gen.load_session_data():
+            raise RuntimeError('Failed to load session data for animation.')
+        if not gen.prepare_driver_data():
+            raise RuntimeError('Failed to prepare driver data for animation.')
+        if not gen.prepare_cinematic_animation_data():
+            raise RuntimeError('Failed to prepare animation frames.')
+        gen.calculate_sector_times()
+
+        # Generate outputs
+        if make_gif:
+            gif_path = gen.create_gif()
+            if gif_path:
+                results['gif_path'] = gif_path
+        if make_mp4:
+            # Fast path: call the internal animation with custom FPS (lower = faster)
+            try:
+                mp4_path = gen._create_animation(output_fps=int(mp4_fps), output_extension='mp4', writer_class=if1.FFMpegWriter, writer_options={'bitrate': 6000})
+            except Exception:
+                # Fallback to default 60 FPS method if internal call signature changes
+                mp4_path = gen.create_mp4()
+            if mp4_path:
+                results['mp4_path'] = mp4_path
+        return results
+    except Exception as e:
+        # Surface a friendly error up the stack
+        raise Exception(f"Animated output generation failed: {e}")
+
 # Main App Layout
 def main():
     setup_environment()
@@ -904,6 +1000,32 @@ def main():
                             st.warning("Not enough drivers with lap times available")
                     except:
                         st.warning("Could not determine P1 vs P2")
+            # Central animated outputs block under driver selection (desktop)
+            st.markdown("---")
+            st.subheader("🎬 Animated Output (Fast MP4)")
+            st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
+            fast_mp4_fps = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.")
+            gen_btn_center = st.button("🚀 Generate MP4", key='gen_anim_desktop')
+            if gen_btn_center:
+                if len(drivers_to_plot) != 2:
+                    st.info("Select exactly two drivers first.")
+                else:
+                    with st.spinner("Generating animated outputs. This can take several minutes, please wait..."):
+                        prog_area = st.empty()
+                        txt_area = st.empty()
+                        try:
+                            st.session_state['mp4_in_progress'] = True
+                            outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=False, make_mp4=True, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps)
+                            if outputs.get('mp4_path'):
+                                st.session_state['latest_mp4_path'] = outputs['mp4_path']
+                                st.success(f"MP4 created: {outputs['mp4_path']}")
+                            if not outputs:
+                                st.info("No animated outputs were generated.")
+                        except Exception as e:
+                            st.info(str(e))
+                        finally:
+                            st.session_state['mp4_in_progress'] = False
+
             # Auto-generate when 2 drivers are selected (desktop)
             if len(drivers_to_plot) == 2:
                 st.session_state['hide_demo'] = True
@@ -915,6 +1037,7 @@ def main():
             if st.button("📱 Toggle Mobile View"):
                 st.session_state.mobile_view = not st.session_state.get('mobile_view', False)
                 st.rerun()
+            
     else:
         if driver_mode == "Specific Drivers":
             driver_options = [f"{d['code']} - {d['name']} ({d['lap_time_formatted']})" for d in driver_info]
@@ -972,6 +1095,32 @@ def main():
                         st.warning("Not enough drivers with lap times available")
                 except:
                     st.warning("Could not determine P1 vs P2")
+        # Central animated outputs block for mobile under selection
+        st.markdown("---")
+        st.subheader("🎬 Animated Output (Fast MP4)")
+        st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
+        fast_mp4_fps_m = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.", key='mp4_fps_mobile')
+        gen_btn_center_m = st.button("🚀 Generate MP4", key='gen_anim_mobile')
+        if gen_btn_center_m:
+            if len(drivers_to_plot) != 2:
+                st.info("Select exactly two drivers first.")
+            else:
+                with st.spinner("Generating animated outputs. This can take several minutes, please wait..."):
+                    prog_area = st.empty()
+                    txt_area = st.empty()
+                    try:
+                        st.session_state['mp4_in_progress'] = True
+                        outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=False, make_mp4=True, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps_m)
+                        if outputs.get('mp4_path'):
+                            st.session_state['latest_mp4_path'] = outputs['mp4_path']
+                            st.success(f"MP4 created: {outputs['mp4_path']}")
+                        if not outputs:
+                            st.info("No animated outputs were generated.")
+                    except Exception as e:
+                        st.info(str(e))
+                    finally:
+                        st.session_state['mp4_in_progress'] = False
+
         # Auto-generate when 2 drivers are selected (mobile)
         if len(drivers_to_plot) == 2:
             st.session_state['hide_demo'] = True
@@ -980,6 +1129,10 @@ def main():
         st.subheader("⚙️ Settings")
         st.session_state.units = st.selectbox("Speed units", ["km/h", "mph"], index=["km/h","mph"].index(st.session_state.get('units','km/h')))
         st.session_state.aspect_ratio = st.selectbox("Aspect ratio", ["Story 9:16","Post 1:1","Widescreen 16:9"], index=["Story 9:16","Post 1:1","Widescreen 16:9"].index(st.session_state.get('aspect_ratio','Story 9:16')))
+        st.markdown("---")
+        st.subheader("🎬 Optional: Animated Outputs (may take time)")
+        make_gif = st.checkbox("Generate GIF (animated)", value=False, help="Creates an animated GIF; may take longer and produce a large file.")
+        make_mp4 = st.checkbox("Generate MP4 (video)", value=False, help="Creates a 60 FPS MP4; requires ffmpeg and can take a while.")
 
 
 
@@ -990,17 +1143,25 @@ def main():
         # Auto-generate visualization immediately
         try:
             driver_data = prepare_driver_data(session, drivers_to_plot, driver_mode)
-            # Build main figure and show it first, centered
+            # Build main figure
             fig = create_data_driven_lap_plot(
                 driver_data, session, drivers_to_plot, year, gp_name, session_display,
                 watermark_text='@datadrivenlaps',
                 units=st.session_state.get('units', 'km/h'),
                 aspect_ratio=st.session_state.get('aspect_ratio', 'Story 9:16')
             )
-            st.subheader("🏁 Your Data Driven Lap Visualization")
-            center_left, center, center_right = st.columns([1, 2.2, 1])
-            with center:
-                st.pyplot(fig, use_container_width=True)
+            # Decide layout: centered image normally; two columns if MP4 generating or available
+            mp4_active = st.session_state.get('mp4_in_progress', False) or bool(st.session_state.get('latest_mp4_path'))
+            if mp4_active:
+                col_left, col_right = st.columns([1, 1])
+                with col_left:
+                    st.subheader("Lap visualization")
+                    st.pyplot(fig, use_container_width=True)
+            else:
+                st.subheader("Lap visualization")
+                center_left, center, center_right = st.columns([1, 2.2, 1])
+                with center:
+                    st.pyplot(fig, use_container_width=True)
 
             # Story highlights
             p1_tel = driver_data[drivers_to_plot[0]]['telemetry']
@@ -1036,6 +1197,51 @@ def main():
                 st.download_button("Widescreen 16:9 (PNG)", data=fig_bytes('Widescreen 16:9'), file_name=f"{filename_base}_16x9.png", mime="image/png")
 
             plt.close(fig)
+
+            # If we have a recent MP4, show it aligned with the image and add download button in Download section
+            if st.session_state.get('latest_mp4_path'):
+                # Place the video at the same vertical height as the image by rendering in the right column when present
+                try:
+                    if 'col_right' in locals():
+                        with col_right:
+                            st.subheader("Lap movie")
+                            with open(st.session_state['latest_mp4_path'], 'rb') as f:
+                                st.video(f.read())
+                except Exception:
+                    pass
+
+            # MP4 download button in the main Download section (only when available)
+            if st.session_state.get('latest_mp4_path'):
+                try:
+                    with open(st.session_state['latest_mp4_path'], 'rb') as f:
+                        st.download_button("Download MP4", data=f, file_name=Path(st.session_state['latest_mp4_path']).name, mime="video/mp4", key='dl_mp4_main')
+                except Exception:
+                    pass
+
+            # Optional animated outputs block
+            if st.session_state.get('mobile_view', False):
+                st.markdown("---")
+                st.subheader("🎬 Animated Outputs (Optional)")
+                make_gif = st.checkbox("Generate GIF (animated)", value=False, help="Creates an animated GIF; may take longer and produce a large file.")
+                make_mp4 = st.checkbox("Generate MP4 (video)", value=False, help="Creates a 60 FPS MP4; requires ffmpeg and can take a while.")
+                if (make_gif or make_mp4) and st.button("🚀 Generate GIF/MP4"):
+                    with st.spinner("Generating animated outputs. This can take several minutes, please wait..."):
+                        prog_area = st.empty()
+                        txt_area = st.empty()
+                        try:
+                            outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif, make_mp4, progress_placeholder=prog_area, text_placeholder=txt_area)
+                            if outputs.get('gif_path'):
+                                st.success(f"GIF created: {outputs['gif_path']}")
+                                with open(outputs['gif_path'], 'rb') as f:
+                                    st.download_button("Download GIF", data=f, file_name=Path(outputs['gif_path']).name, mime="image/gif")
+                            if outputs.get('mp4_path'):
+                                st.success(f"MP4 created: {outputs['mp4_path']}")
+                                with open(outputs['mp4_path'], 'rb') as f:
+                                    st.download_button("Download MP4", data=f, file_name=Path(outputs['mp4_path']).name, mime="video/mp4")
+                            if not outputs:
+                                st.info("No animated outputs were generated.")
+                        except Exception as e:
+                            st.info(str(e))
         except Exception as e:
             st.info("Something went wrong while generating the visualization. Please try again.")
     else:
