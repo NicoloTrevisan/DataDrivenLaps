@@ -1211,17 +1211,16 @@ def main():
             # Central animated outputs block under driver selection (desktop)
             st.markdown("---")
             st.subheader("🎬 Animated Output (Fast MP4)")
-            st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
-            fast_mp4_fps = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.")
+            st.caption("Optimized for Cloud: fixed 2 FPS for reliability. Output appears next to the image.")
+            fast_mp4_fps = 2
             gen_btn_center = st.button("🚀 Generate MP4", key='gen_anim_desktop')
             if gen_btn_center:
                 if len(drivers_to_plot) != 2:
                     st.info("Select exactly two drivers first.")
                 else:
                     with st.spinner("Generating animated outputs. This can take several minutes, please wait..."):
-                        debug_exp = st.expander("Debug console", expanded=True)
-                        prog_area = debug_exp.progress(0)
-                        txt_area = debug_exp.empty()
+                        prog_area = st.progress(0)
+                        txt_area = None
                         try:
                             st.session_state['mp4_in_progress'] = True
                             outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=False, make_mp4=True, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps)
@@ -1310,17 +1309,16 @@ def main():
         # Central animated outputs block for mobile under selection
         st.markdown("---")
         st.subheader("🎬 Animated Output (Fast MP4)")
-        st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
-        fast_mp4_fps_m = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.", key='mp4_fps_mobile')
+        st.caption("Optimized for Cloud: fixed 2 FPS for reliability. Output appears next to the image.")
+        fast_mp4_fps_m = 2
         gen_btn_center_m = st.button("🚀 Generate MP4", key='gen_anim_mobile')
         if gen_btn_center_m:
             if len(drivers_to_plot) != 2:
                 st.info("Select exactly two drivers first.")
             else:
                 with st.spinner("Generating animated outputs. This can take several minutes, please wait..."):
-                    debug_exp = st.expander("Debug console", expanded=True)
-                    prog_area = debug_exp.progress(0)
-                    txt_area = debug_exp.empty()
+                    prog_area = st.progress(0)
+                    txt_area = None
                     try:
                         st.session_state['mp4_in_progress'] = True
                         outputs = _generate_gif_mp4_outputs(year, gp_name, session_display, drivers_to_plot, make_gif=False, make_mp4=True, progress_placeholder=prog_area, text_placeholder=txt_area, mp4_fps=fast_mp4_fps_m)
@@ -1478,35 +1476,7 @@ def main():
     else:
         st.caption("Select exactly two drivers to generate a data-driven lap image.")
     
-    # Persistent Debug Console at bottom
-    st.markdown("---")
-    st.subheader("🔧 Debug Console")
-    
-    # Initialize debug log in session state
-    if 'debug_log' not in st.session_state:
-        st.session_state.debug_log = []
-    
-    # Add current status to debug log
-    current_status = []
-    current_status.append(f"Session loaded: {st.session_state.get('session_loaded', False)}")
-    current_status.append(f"Drivers selected: {len(drivers_to_plot) if 'drivers_to_plot' in locals() else 0}")
-    current_status.append(f"MP4 in progress: {st.session_state.get('mp4_in_progress', False)}")
-    current_status.append(f"Latest MP4 path: {st.session_state.get('latest_mp4_path', 'None')}")
-    
-    # Show debug info
-    with st.expander("Live Debug Info", expanded=False):
-        st.text("Current Status:")
-        for status in current_status:
-            st.text(f"  • {status}")
-        
-        if st.session_state.debug_log:
-            st.text("\nRecent Debug Messages:")
-            for i, log_entry in enumerate(st.session_state.debug_log[-10:]):  # Show last 10 entries
-                st.text(f"  {i+1}. {log_entry}")
-        
-        if st.button("Clear Debug Log"):
-            st.session_state.debug_log = []
-            st.rerun()
+    # Debug console removed for cleaner UI (progress bar retained during generation)
     
     # Footer
     st.markdown("---")
