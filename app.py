@@ -1187,8 +1187,8 @@ def main():
             # Central animated outputs block under driver selection (desktop)
             st.markdown("---")
             st.subheader("🎬 Animated Output (Fast MP4)")
-            st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
-            fast_mp4_fps = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.")
+            st.caption("Optimized for Cloud: fixed 2 FPS for reliability. Output appears next to the image.")
+            fast_mp4_fps = 2
             gen_btn_center = st.button("🚀 Generate MP4", key='gen_anim_desktop')
             if gen_btn_center:
                 if len(drivers_to_plot) != 2:
@@ -1286,8 +1286,8 @@ def main():
         # Central animated outputs block for mobile under selection
         st.markdown("---")
         st.subheader("🎬 Animated Output (Fast MP4)")
-        st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
-        fast_mp4_fps_m = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.", key='mp4_fps_mobile')
+        st.caption("Optimized for Cloud: fixed 2 FPS for reliability. Output appears next to the image.")
+        fast_mp4_fps_m = 2
         gen_btn_center_m = st.button("🚀 Generate MP4", key='gen_anim_mobile')
         if gen_btn_center_m:
             if len(drivers_to_plot) != 2:
