@@ -922,10 +922,10 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                         _log(f"❌ Animation data not ready for {output_extension.upper()}.")
                         return None
                     
-                    # Limit animation duration for Streamlit Cloud resources
-                    max_duration = 60  # 60 seconds max
-                    actual_duration = min(gen.animation_duration, max_duration)
-                    if actual_duration < gen.animation_duration:
+                    # Only limit duration for resource-constrained GIF fallback; use full duration for MP4
+                    limit_resources = (output_extension == 'gif')
+                    actual_duration = min(gen.animation_duration, 60) if limit_resources else gen.animation_duration
+                    if limit_resources and actual_duration < gen.animation_duration:
                         _log(f"Limiting animation duration to {actual_duration}s (was {gen.animation_duration:.1f}s) for performance")
                         
                     fig = gen._create_plot_layout() 
@@ -934,12 +934,13 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                     live_duration_output_frames = int(actual_duration * output_fps)
                     total_output_video_frames = live_duration_output_frames + static_frames
                     
-                    # Safety check for frame count
-                    max_frames = 1000  # Limit total frames
-                    if total_output_video_frames > max_frames:
-                        _log(f"Reducing frame count from {total_output_video_frames} to {max_frames} for performance")
-                        live_duration_output_frames = max_frames - static_frames
-                        total_output_video_frames = max_frames
+                    # Safety check for frame count (only constrain for GIF fallback)
+                    if limit_resources:
+                        max_frames = 1000
+                        if total_output_video_frames > max_frames:
+                            _log(f"Reducing frame count from {total_output_video_frames} to {max_frames} for performance")
+                            live_duration_output_frames = max_frames - static_frames
+                            total_output_video_frames = max_frames
 
                     # Map output frames to the master animation_total_frames (source 60FPS data)
                     source_data_indices = np.linspace(0, gen.animation_total_frames - 1, live_duration_output_frames, endpoint=True).astype(int)
