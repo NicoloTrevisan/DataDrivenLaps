@@ -784,37 +784,13 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                     text_placeholder.code("\n".join(log_entries))
                 except Exception:
                     text_placeholder.write(msg)
-        # Try multiple locations to import the generator module
-        if1 = None
-        module_name = 'interactive_f1_ghost_racing'
-        # First: sibling file inside deployment_ready (if present)
-        candidate1 = Path(__file__).resolve().parent / f'{module_name}.py'
-        # Second: repo-level scripts directory
-        candidate2 = Path(__file__).resolve().parents[1] / 'scripts' / f'{module_name}.py'
-
-        def _load_module_from_path(name, path):
-            loader = importlib.machinery.SourceFileLoader(name, str(path))
-            spec = importlib.util.spec_from_loader(loader.name, loader)
-            mod = importlib.util.module_from_spec(spec)
-            loader.exec_module(mod)  # type: ignore
-            return mod
-
-        if candidate1.exists():
-            _log(f"Using local module: {candidate1}")
-            if1 = _load_module_from_path(module_name, candidate1)
-        elif candidate2.exists():
-            _log(f"Using repo scripts module: {candidate2}")
-            if1 = _load_module_from_path(module_name, candidate2)
-        else:
-            # Last attempt: sys.path import if repository layout is available at runtime
-            try:
-                scripts_dir = Path(__file__).resolve().parents[1] / 'scripts'
-                if str(scripts_dir) not in sys.path:
-                    sys.path.append(str(scripts_dir))
-                import interactive_f1_ghost_racing as if1  # type: ignore
-                _log("Imported interactive_f1_ghost_racing via sys.path")
-            except Exception as _e:
-                raise ImportError("Could not locate interactive_f1_ghost_racing.py. Ensure 'scripts/' is deployed alongside the app or copy the file into 'deployment_ready/'.")
+        # Import the generator module. It is expected to be in the same directory.
+        try:
+            import interactive_f1_ghost_racing as if1
+            _log("Successfully imported 'interactive_f1_ghost_racing.py'")
+        except ImportError as e:
+            _log(f"Failed to import 'interactive_f1_ghost_racing': {e}")
+            raise ImportError("Could not import the animation module. Ensure 'interactive_f1_ghost_racing.py' is in the root directory.")
 
         # Create a Streamlit-backed progress bar proxy to replace the module's ProgressBar
         class _StreamlitProgressBar:
@@ -885,35 +861,27 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                 _log(f"Creating MP4 at {int(mp4_fps)} FPS...")
                 _log(f"Output directory will be: {os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'outputs', 'MP4s')}")
                 
-                # Force MP4 with FFMpegWriter - packages.txt should have installed ffmpeg
+                # Simple FFmpeg check without installation attempt
                 import shutil
                 ffmpeg_available = shutil.which('ffmpeg') is not None
-                _log(f"FFmpeg binary in PATH: {ffmpeg_available}")
+                _log(f"FFmpeg available: {ffmpeg_available}")
                 
-                # Try multiple paths where ffmpeg might be installed on Streamlit Cloud
-                possible_ffmpeg_paths = [
-                    '/usr/bin/ffmpeg',
-                    '/usr/local/bin/ffmpeg', 
-                    '/opt/conda/bin/ffmpeg',
-                    '/home/adminuser/.local/bin/ffmpeg'
-                ]
-                
-                ffmpeg_found = ffmpeg_available
-                if not ffmpeg_found:
-                    for path in possible_ffmpeg_paths:
-                        if os.path.exists(path):
-                            _log(f"Found ffmpeg at: {path}")
-                            ffmpeg_found = True
-                            break
-                
-                _log(f"Final ffmpeg status: {ffmpeg_found}")
-                
-                # Always try MP4 first - packages.txt should ensure ffmpeg is available
+                # Set default values
                 writer_class = if1.FFMpegWriter
                 output_extension = 'mp4'
-                writer_options = {'bitrate': 2000}  # Very low bitrate for speed
+                writer_options = {'bitrate': 6000}
                 
-                _log("Proceeding with MP4 generation using FFMpegWriter")
+                # Skip FFmpeg and use PillowWriter for GIF on Streamlit Cloud
+                if not ffmpeg_available:
+                    _log("FFmpeg not available, using PillowWriter for GIF")
+                    writer_class = if1.PillowWriter
+                    output_extension = 'gif'
+                    writer_options = {}
+                    # Reduce FPS for better performance on limited resources
+                    mp4_fps = min(mp4_fps, 10)
+                    _log(f"Reduced FPS to {mp4_fps} for better performance")
+                else:
+                    _log("FFmpeg available, proceeding with MP4")
                 
                 # Create a safe temporary directory for output
                 import tempfile
@@ -930,11 +898,11 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                         _log(f"❌ Animation data not ready for {output_extension.upper()}.")
                         return None
                     
-                    # Very aggressive limits for Streamlit Cloud stability
-                    max_duration = 20  # Much shorter for health check compliance
-                    actual_duration = min(gen.animation_duration, max_duration)
-                    if actual_duration < gen.animation_duration:
-                        _log(f"Limiting animation duration to {actual_duration}s (was {gen.animation_duration:.1f}s) for Cloud health check compliance")
+                    # Only limit duration for resource-constrained GIF fallback; use full duration for MP4
+                    limit_resources = (output_extension == 'gif')
+                    actual_duration = min(gen.animation_duration, 60) if limit_resources else gen.animation_duration
+                    if limit_resources and actual_duration < gen.animation_duration:
+                        _log(f"Limiting animation duration to {actual_duration}s (was {gen.animation_duration:.1f}s) for performance")
                         
                     fig = gen._create_plot_layout() 
                     static_end_seconds = 2  # Reduce static time
@@ -942,12 +910,13 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                     live_duration_output_frames = int(actual_duration * output_fps)
                     total_output_video_frames = live_duration_output_frames + static_frames
                     
-                    # Very aggressive frame limit for health check compliance
-                    max_frames = 300  # Much lower for health check survival
-                    if total_output_video_frames > max_frames:
-                        _log(f"Reducing frame count from {total_output_video_frames} to {max_frames} for health check compliance")
-                        live_duration_output_frames = max_frames - static_frames
-                        total_output_video_frames = max_frames
+                    # Safety check for frame count (only constrain for GIF fallback)
+                    if limit_resources:
+                        max_frames = 1000
+                        if total_output_video_frames > max_frames:
+                            _log(f"Reducing frame count from {total_output_video_frames} to {max_frames} for performance")
+                            live_duration_output_frames = max_frames - static_frames
+                            total_output_video_frames = max_frames
 
                     # Map output frames to the master animation_total_frames (source 60FPS data)
                     source_data_indices = np.linspace(0, gen.animation_total_frames - 1, live_duration_output_frames, endpoint=True).astype(int)
@@ -981,11 +950,8 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
 
                     try:
                         writer_obj = writer_class(fps=output_fps, **(writer_options or {}))
-                        save_kwargs = {'facecolor': '#000000'}
-                        # Avoid bbox_inches overhead for MP4; keep default for speed and stability
-                        if output_extension == 'gif':
-                            save_kwargs.update({'bbox_inches': 'tight', 'pad_inches': 0.1})
-                        anim_obj.save(full_path_output, writer=writer_obj, savefig_kwargs=save_kwargs)
+                        anim_obj.save(full_path_output, writer=writer_obj, 
+                                     savefig_kwargs={'bbox_inches': 'tight', 'pad_inches': 0.1, 'facecolor': '#000000'})
                         progress_bar_anim.close()
                         _log(f"✅ {output_extension.upper()} saved: {full_path_output} ({os.path.getsize(full_path_output)/(1024*1024):.1f} MB)")
                         return full_path_output
@@ -993,7 +959,18 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                         progress_bar_anim.close()
                         _log(f"❌ {output_extension.upper()} creation failed: {e_anim}")
                         
-                        # No GIF fallback when MP4 path selected; surface error
+                        # If FFmpeg failed, try PillowWriter as fallback for MP4->GIF
+                        if output_extension == 'mp4' and 'ffmpeg' in str(e_anim).lower():
+                            _log("FFmpeg not available, trying PillowWriter for GIF as fallback...")
+                            gif_path = full_path_output.replace('.mp4', '.gif')
+                            try:
+                                pillow_writer = if1.PillowWriter(fps=min(output_fps, 20))  # Limit GIF FPS
+                                anim_obj.save(gif_path, writer=pillow_writer,
+                                            savefig_kwargs={'bbox_inches': 'tight', 'pad_inches': 0.1, 'facecolor': '#000000'})
+                                _log(f"✅ GIF fallback saved: {gif_path} ({os.path.getsize(gif_path)/(1024*1024):.1f} MB)")
+                                return gif_path
+                            except Exception as e_gif:
+                                _log(f"❌ GIF fallback also failed: {e_gif}")
                         
                         return None
                     finally:
@@ -1211,13 +1188,13 @@ def main():
             st.markdown("---")
             st.subheader("🎬 Animated Output (Fast MP4)")
             st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
-            fast_mp4_fps = st.slider("MP4 FPS (lower = faster)", min_value=2, max_value=15, value=3, step=1, help="Lower FPS reduces render time and file size.")
+            fast_mp4_fps = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.")
             gen_btn_center = st.button("🚀 Generate MP4", key='gen_anim_desktop')
             if gen_btn_center:
                 if len(drivers_to_plot) != 2:
                     st.info("Select exactly two drivers first.")
                 else:
-                    with st.spinner("Generating animated outputs. Processing shortened video for Cloud compatibility..."):
+                    with st.spinner("Generating animated outputs. This can take several minutes, please wait..."):
                         debug_exp = st.expander("Debug console", expanded=True)
                         prog_area = debug_exp.progress(0)
                         txt_area = debug_exp.empty()
@@ -1310,7 +1287,7 @@ def main():
         st.markdown("---")
         st.subheader("🎬 Animated Output (Fast MP4)")
         st.caption("Lower FPS MP4 for quicker results. Output will appear next to the image.")
-        fast_mp4_fps_m = st.slider("MP4 FPS (lower = faster)", min_value=2, max_value=15, value=3, step=1, help="Lower FPS reduces render time and file size.", key='mp4_fps_mobile')
+        fast_mp4_fps_m = st.slider("MP4 FPS (lower = faster)", min_value=5, max_value=30, value=5, step=1, help="Lower FPS reduces render time and file size.", key='mp4_fps_mobile')
         gen_btn_center_m = st.button("🚀 Generate MP4", key='gen_anim_mobile')
         if gen_btn_center_m:
             if len(drivers_to_plot) != 2:
@@ -1375,12 +1352,12 @@ def main():
                 col_left, col_right = st.columns([1, 1])
                 with col_left:
                     st.subheader("Lap visualization")
-                    st.pyplot(fig, width='stretch')
+                    st.pyplot(fig, use_container_width=True)
             else:
                 st.subheader("Lap visualization")
                 center_left, center, center_right = st.columns([1, 2.2, 1])
                 with center:
-                    st.pyplot(fig, width='stretch')
+                    st.pyplot(fig, use_container_width=True)
 
             # Story highlights
             p1_tel = driver_data[drivers_to_plot[0]]['telemetry']
@@ -1454,7 +1431,7 @@ def main():
                 make_gif = st.checkbox("Generate GIF (animated)", value=False, help="Creates an animated GIF; may take longer and produce a large file.")
                 make_mp4 = st.checkbox("Generate MP4 (video)", value=False, help="Creates a 60 FPS MP4; requires ffmpeg and can take a while.")
                 if (make_gif or make_mp4) and st.button("🚀 Generate GIF/MP4"):
-                    with st.spinner("Generating animated outputs. Processing shortened video for Cloud compatibility..."):
+                    with st.spinner("Generating animated outputs. This can take several minutes, please wait..."):
                         prog_area = st.empty()
                         txt_area = st.empty()
                         st.caption("Logs:")
