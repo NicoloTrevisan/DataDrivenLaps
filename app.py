@@ -907,7 +907,9 @@ def _generate_gif_mp4_outputs(year: int, gp_name: str, session_display: str, dri
                     fig = gen._create_plot_layout() 
                     static_end_seconds = 2  # Reduce static time
                     static_frames = static_end_seconds * output_fps
-                    live_duration_output_frames = int(actual_duration * output_fps)
+                    # Aggressive frame downsampling for Cloud: step 2s per frame (≈0.5 fps effective)
+                    frame_step_seconds = 2
+                    live_duration_output_frames = max(1, int(actual_duration / frame_step_seconds))
                     total_output_video_frames = live_duration_output_frames + static_frames
                     
                     # Safety check for frame count (only constrain for GIF fallback)
