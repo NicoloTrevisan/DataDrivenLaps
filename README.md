@@ -2,6 +2,8 @@
 
 A responsive web application for creating F1 ghost racing images using official telemetry data from FastF1.
 
+Example of a full video output: https://www.youtube.com/shorts/U7LXbB6u0EM (current web version is simpliefied due to resource limitations)
+
 ## ✨ Features
 
 ### 📱 Mobile-First Design
